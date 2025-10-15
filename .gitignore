@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+.coverage*
+htmlcov/
+
+# Virtual env
+.venv/
+env/
+venv/
+
+# OS/Editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Secrets / local configs
+.env
+sa.json
+
+# Data / temp
+tmp/
+*.log
