@@ -1,0 +1,15 @@
+endpoints:
+  attendance: "/attendance"
+  marks_current: "/marks/current"
+  marks_final: "/marks/final"
+  schedule: "/schedule"
+  subjects: "/subjects"
+  work_forms: "/work_forms"
+
+load:
+  daily_window_days: 2   # скользящее окно инкремента, если нет updatedAfter
+  retry:
+    max_attempts: 5
+    backoff_seconds: 2
+
+timezone: "Europe/Podgorica"
