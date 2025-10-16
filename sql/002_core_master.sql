@@ -111,8 +111,7 @@ CREATE TABLE IF NOT EXISTS core.teaching_group (
   active      boolean NOT NULL DEFAULT true
 );
 
--- 10) GROUP_STAFF_ASSIGNMENT (постоянный преподаватель группы, без разовых замен)
--- В момент времени у группы только один постоянный учитель.
+-- 10) GROUP_STAFF_ASSIGNMENT (постоянные преподаватели группы; допускает нескольких одновременно)
 CREATE TABLE IF NOT EXISTS core.group_staff_assignment (
   group_id   integer NOT NULL REFERENCES core.teaching_group(group_id)
                       ON UPDATE CASCADE ON DELETE CASCADE,
@@ -120,14 +119,18 @@ CREATE TABLE IF NOT EXISTS core.group_staff_assignment (
                       ON UPDATE CASCADE ON DELETE RESTRICT,
   valid_from date    NOT NULL,
   valid_to   date,
-  CONSTRAINT group_staff_assignment_pk PRIMARY KEY (group_id, valid_from),
+  -- ВАЖНО: PK включает staff_id, чтобы хранить несколько учителей параллельно
+  CONSTRAINT group_staff_assignment_pk PRIMARY KEY (group_id, staff_id, valid_from),
   CONSTRAINT group_staff_assignment_dates_ck CHECK (valid_to IS NULL OR valid_to >= valid_from),
+  -- ВАЖНО: EXCLUDE запрещает пересечения периодов ТОЛЬКО для одной и той же пары (group_id, staff_id)
   CONSTRAINT group_staff_assignment_no_overlap
     EXCLUDE USING gist (
       group_id WITH =,
+      staff_id WITH =,
       daterange(valid_from, COALESCE(valid_to, 'infinity'::date), '[]') WITH &&
     ) DEFERRABLE INITIALLY IMMEDIATE
 );
+
 
 -- 11) GROUP_STUDENT_MEMBERSHIP (история принадлежности ученика к учебной группе)
 CREATE TABLE IF NOT EXISTS core.group_student_membership (
