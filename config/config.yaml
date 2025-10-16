@@ -13,3 +13,16 @@ load:
     backoff_seconds: 2
 
 timezone: "Europe/Podgorica"
+
+api:
+  base_url: "https://adriatic.mojo.education/api/v1"
+  default_limit: 500
+  timeout_sec: 30
+  retry:
+    total: 5
+    backoff_factor: 0.5
+    status_forcelist: [429, 500, 502, 503, 504]
+  windows:
+    attendance_days_back: 2
+    schedule_days_forward: 7
+  department_default: 0
