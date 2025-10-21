@@ -20,8 +20,6 @@ class Settings:
     pg_user: str = os.getenv("PGUSER", "mojo_user")
     pg_password: str = os.getenv("PGPASSWORD", "")
     timezone: str = os.getenv("TIMEZONE", CONFIG.get("timezone", "Europe/Podgorica"))
-    mojo_base_url: str = os.getenv("MOJO_BASE_URL", "")
-    mojo_token: str = os.getenv("MOJO_API_TOKEN", "")
 
 
 settings = Settings()

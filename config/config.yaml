@@ -7,7 +7,7 @@ endpoints:
   work_forms: "/work_forms"
 
 load:
-  daily_window_days: 2   # скользящее окно инкремента, если нет updatedAfter
+  daily_window_days: 2 # скользящее окно инкремента, если нет updatedAfter
   retry:
     max_attempts: 5
     backoff_seconds: 2
@@ -26,3 +26,11 @@ api:
     attendance_days_back: 2
     schedule_days_forward: 7
   department_default: 0
+
+excel:
+  storage: drive
+  drive:
+    students_id: "19I55-vBV5CVCQhqsD4TAQK7pfQaBdwSB"
+    parents_id: "1IMCCO_e8o5JDP1OpGotNeQf07305eFM6"
+    classes_id: "1f-PkrPH4fGTvPUZvQ1b0sJTksdsA9DvG"
+    staff_id: "1yDGjR1S0fFTxCmQHwGeEvlUn9RAs51S7"
