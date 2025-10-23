@@ -34,3 +34,23 @@ excel:
     parents_id: "1IMCCO_e8o5JDP1OpGotNeQf07305eFM6"
     classes_id: "1f-PkrPH4fGTvPUZvQ1b0sJTksdsA9DvG"
     staff_id: "1yDGjR1S0fFTxCmQHwGeEvlUn9RAs51S7"
+
+reports:
+  timezone: "Europe/Podgorica" # таймзона формирования отчётов
+  daily_send_hour_local: 3 # запуск после CORE ETL
+  drive:
+    # Корневая папка для всех отчётов (ID предоставлен)
+    root_folder_id: "1_PVTr7QhtD4Y0Np7NiVKFRVSZ3aznNGa"
+  email:
+    sender: "reports@adriaticcollege.com"
+    # cc-политика по ролям может расширяться; для текущего отчёта cc = academic_director из CORE
+    cc_roles: []
+
+  # Настройки КОНКРЕТНО для ежедневного отчёта координаторов посещаемости
+  coordinator_daily_attendance:
+    # Папка вида mojo_reports/coordinator_daily_attendance_report (ID предоставлен)
+    parent_folder_id: "1dsk_CUXZKzr0fA1ZsPdLm6X90gYvGReu"
+    template_id: "1aRiIjrCY8bE32Jvqdub0SJPc7pGy7i1X"
+    per_slide_max_rows: 30
+    # Имя PDF: [дата]_[programme]_coordinator_daily_attendance_report.pdf
+    filename_pattern: "{date}_{programme}_coordinator_daily_attendance_report.pdf"
