@@ -69,6 +69,22 @@ def compute_report_date(explicit: Optional[str] = None) -> date:
         return (now_local - timedelta(days=3)).date()
 
 
+def _already_done(cur, report_key: str, report_date: date, programme_code: str) -> bool:
+    cur.execute(
+        """
+        SELECT 1
+        FROM rep.report_run
+        WHERE report_key = %s
+          AND report_date = %s
+          AND programme_code = %s
+          AND pdf_drive_id IS NOT NULL
+        LIMIT 1
+        """,
+        (report_key, report_date, programme_code),
+    )
+    return cur.fetchone() is not None
+
+
 def month_partition_folder(d: date) -> str:
     """Папка-месяц формата MMYYYY (например, 102025)."""
     return d.strftime("%m%Y")
@@ -419,6 +435,17 @@ def main():
                 continue  # подстраховка
 
             pname = coordinators[0]["programme_name"]  # у всех одинаковое
+
+            # ⬇️ вставка анти-дубля:
+            with conn.cursor() as cur:
+                # если _already_done ожидает programme_code — передаём pcode;
+                # если у вас версия с programme_id — передайте id.
+                if _already_done(cur, REPORT_KEY, report_date, pcode):
+                    print(
+                        f"[report] skip: already exists for {report_date} programme={pname}"
+                    )
+                    continue
+
             # Может быть пусто -> нулевой отчёт
             prog_rows = rows_by_programme.get(pcode, [])
 
