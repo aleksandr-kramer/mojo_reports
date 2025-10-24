@@ -131,7 +131,24 @@ def _upsert_marks_current(cur, d_from: date, d_to: date) -> int:
           form_id           = EXCLUDED.form_id,
           form_name_raw     = EXCLUDED.form_name_raw,
           weight_raw        = EXCLUDED.weight_raw,
-          weight_pct        = EXCLUDED.weight_pct;
+          weight_pct        = EXCLUDED.weight_pct
+      WHERE
+          core.mark_current.student_id        IS DISTINCT FROM EXCLUDED.student_id OR
+          core.mark_current.group_id          IS DISTINCT FROM EXCLUDED.group_id OR
+          core.mark_current.period_id         IS DISTINCT FROM EXCLUDED.period_id OR
+          core.mark_current.period_label_raw  IS DISTINCT FROM EXCLUDED.period_label_raw OR
+          core.mark_current.group_name_snapshot IS DISTINCT FROM EXCLUDED.group_name_snapshot OR
+          core.mark_current.lesson_date       IS DISTINCT FROM EXCLUDED.lesson_date OR
+          core.mark_current.created_at_src    IS DISTINCT FROM EXCLUDED.created_at_src OR
+          core.mark_current.value             IS DISTINCT FROM EXCLUDED.value OR
+          core.mark_current.assessment        IS DISTINCT FROM EXCLUDED.assessment OR
+          core.mark_current.assessment_scheme IS DISTINCT FROM EXCLUDED.assessment_scheme OR
+          core.mark_current.is_control        IS DISTINCT FROM EXCLUDED.is_control OR
+          core.mark_current.form_id           IS DISTINCT FROM EXCLUDED.form_id OR
+          core.mark_current.form_name_raw     IS DISTINCT FROM EXCLUDED.form_name_raw OR
+          core.mark_current.weight_raw        IS DISTINCT FROM EXCLUDED.weight_raw OR
+          core.mark_current.weight_pct        IS DISTINCT FROM EXCLUDED.weight_pct;
+
     """
     cur.execute(sql, {"d_from": d_from, "d_to": d_to, "ng_en": ng_en, "ng_ru": ng_ru})
     return cur.rowcount or 0

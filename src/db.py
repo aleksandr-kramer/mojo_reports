@@ -20,24 +20,24 @@ def get_conn():
     finally:
         conn.close()
 
+
 @contextmanager
 def advisory_lock(lock_key: int, wait: bool = True):
     """
-    Глобальная блокировка на период задачи.
-    lock_key — произвольный int (например, RAW=1001, CORE=1002, REPORTS=1003).
+    Глобальная блокировка на период запуска задач RAW/CORE/Reports.
+    Примеры ключей: RAW=1001, CORE=1002, REPORTS=1003.
     """
     with get_conn() as conn:
         conn.autocommit = True
         with conn.cursor() as cur:
             if wait:
                 cur.execute("SELECT pg_advisory_lock(%s);", (lock_key,))
-                locked = True
             else:
                 cur.execute("SELECT pg_try_advisory_lock(%s);", (lock_key,))
-                locked = cur.fetchone()[0]
+                ok = cur.fetchone()[0]
+                if not ok:
+                    raise RuntimeError(f"could not acquire advisory lock {lock_key}")
         try:
-            if not locked:
-                raise RuntimeError(f"could not acquire advisory lock {lock_key}")
             yield
         finally:
             with conn.cursor() as cur:

@@ -79,38 +79,23 @@ GROUP BY group_id, staff_id, seg_id
 """
 
 SQL_BUILD_GROUP_STUDENTS = """
--- Источник A: посещаемость → дата факта участия (дата урока)
+-- Источник: полный список пар урок–ученик из RAW attendance (включая status=0)
 WITH att AS (
     SELECT DISTINCT
         ts.group_id,
-        a.student_id,
+        ra.student_id,
         l.lesson_date::date AS d
-    FROM core.attendance_event a
-    JOIN core.lesson l              ON l.lesson_id = a.lesson_id
-    JOIN core.timetable_schedule ts ON ts.schedule_id = l.schedule_id
-    WHERE a.student_id  IS NOT NULL
-      AND ts.group_id   IS NOT NULL
-      AND l.lesson_date IS NOT NULL
-),
--- Источник B: текущие оценки → дата факта участия (lesson_date из mark_current)
-mc AS (
-    SELECT DISTINCT
-        mc.group_id,
-        mc.student_id,
-        mc.lesson_date::date AS d
-    FROM core.mark_current mc
-    WHERE mc.group_id    IS NOT NULL
-      AND mc.student_id  IS NOT NULL
-      AND mc.lesson_date IS NOT NULL
-),
-base AS (
-    SELECT * FROM att
-    UNION
-    SELECT * FROM mc
+    FROM raw.attendance ra
+    JOIN core.lesson              l  ON l.lesson_id   = ra.lesson_id
+    JOIN core.timetable_schedule  ts ON ts.schedule_id = l.schedule_id
+    JOIN core.student             s  ON s.student_id   = ra.student_id
+    WHERE ra.student_id  IS NOT NULL
+      AND ts.group_id    IS NOT NULL
+      AND l.lesson_date  IS NOT NULL
 ),
 points AS (
     SELECT group_id, student_id, d AS start_date, d AS end_date
-    FROM base
+    FROM att
 ),
 prevmax AS (
     SELECT
@@ -156,7 +141,7 @@ def run_groups() -> None:
     """
     Полная пересборка витрин:
       - core.group_staff_assignment  ← фактические уроки (без замен)
-      - core.group_student_membership ← факты посещаемости ∪ оценок
+      - core.group_student_membership ← пары урок–ученик из RAW attendance (включая status=0)
     Интервалы: склейка с допуском по разрыву (merge_gap_days), строка появляется
     только при реальном «разрыве» участия. EXCLUDE-индексы удовлетворяются.
     """

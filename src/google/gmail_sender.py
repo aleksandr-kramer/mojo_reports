@@ -74,5 +74,16 @@ def send_email_with_attachment(
     body = {"raw": raw}
 
     # userId='me' работает при импёрсонации: письмо отправится от имени impersonated user.
-    sent = gmail.users().messages().send(userId="me", body=body).execute()
+    from googleapiclient.errors import HttpError
+
+    from .retry import with_retries  # ← добавить импорт вверху файла
+
+    def _api_call():
+        return gmail.users().messages().send(userId="me", body=body).execute()
+
+    try:
+        sent = with_retries(_api_call, attempts=6, base=1.0, cap=32.0)
+    except HttpError as e:
+        # отдаём понятную ошибку наверх — пусть оркестратор решит, что делать
+        raise
     return sent.get("id", "")

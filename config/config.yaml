@@ -8,6 +8,7 @@ endpoints:
 
 load:
   daily_window_days: 2 # скользящее окно инкремента, если нет updatedAfter
+  weekly_deep_days: 60
   retry:
     max_attempts: 5
     backoff_seconds: 2
@@ -54,3 +55,11 @@ reports:
     per_slide_max_rows: 30
     # Имя PDF: [дата]_[programme]_coordinator_daily_attendance_report.pdf
     filename_pattern: "{date}_{programme}_coordinator_daily_attendance_report.pdf"
+
+google:
+  rate_limits:
+    gmail:
+      max_messages_per_hour: 90 # безопасная «шапка»
+      burst: 10 # не больше 10 подряд без паузы
+      min_seconds_between_sends: 40
+      max_consecutive_errors: 5
