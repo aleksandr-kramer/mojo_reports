@@ -1,25 +1,31 @@
 from __future__ import annotations
 
 import io
+import time
 from typing import Dict, List, Optional, Tuple
 
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
 from .clients import build_services
+from .retry import with_retries
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DRIVE вспомогательные функции
 
 
 def ensure_subfolder(drive, parent_id: str, name: str) -> str:
+    """
+    Возвращает ID подпапки с именем `name` внутри `parent_id`, создаёт её при отсутствии.
+    """
     # В Drive query одинарные кавычки внутри имени надо экранировать обратным слешем
     safe_name = name.replace("'", "\\'")
     query = (
         "mimeType='application/vnd.google-apps.folder' and trashed=false "
         f"and '{parent_id}' in parents and name='{safe_name}'"
     )
-    resp = (
-        drive.files()
+    resp = with_retries(
+        lambda: drive.files()
         .list(
             q=query,
             fields="files(id, name)",
@@ -39,8 +45,8 @@ def ensure_subfolder(drive, parent_id: str, name: str) -> str:
         "mimeType": "application/vnd.google-apps.folder",
         "parents": [parent_id],
     }
-    folder = (
-        drive.files()
+    folder = with_retries(
+        lambda: drive.files()
         .create(
             body=meta,
             fields="id",
@@ -52,8 +58,11 @@ def ensure_subfolder(drive, parent_id: str, name: str) -> str:
 
 
 def get_file_mime_type(drive, file_id: str) -> str:
-    info = (
-        drive.files()
+    """
+    Возвращает MIME-тип файла по его ID.
+    """
+    info = with_retries(
+        lambda: drive.files()
         .get(
             fileId=file_id,
             fields="id, mimeType",
@@ -69,8 +78,8 @@ def resolve_shortcut_target(drive, file_id: str) -> str:
     Если file_id указывает на ярлык (shortcut), возвращает targetId,
     иначе возвращает исходный file_id.
     """
-    info = (
-        drive.files()
+    info = with_retries(
+        lambda: drive.files()
         .get(
             fileId=file_id,
             fields="id, mimeType, shortcutDetails(targetId)",
@@ -88,6 +97,10 @@ def resolve_shortcut_target(drive, file_id: str) -> str:
 def copy_slides_to_folder(
     drive, template_id: str, title: str, parent_folder_id: str
 ) -> str:
+    """
+    Копирует шаблон (Slides/PPTX) в целевую папку с именем `title`.
+    Для PPTX выполняет конверсию в Slides. Возвращает ID созданной презентации.
+    """
     # 1) Если это ярлык — резолвим реальный файл
     real_id = resolve_shortcut_target(drive, template_id)
 
@@ -98,8 +111,8 @@ def copy_slides_to_folder(
 
     # 2) Если исходник — уже Google Slides, обычная копия
     if src_mime == "application/vnd.google-apps.presentation":
-        copied = (
-            drive.files()
+        copied = with_retries(
+            lambda: drive.files()
             .copy(
                 fileId=real_id,
                 body=body,
@@ -117,13 +130,13 @@ def copy_slides_to_folder(
             )
         return file_id
 
-    # 3) Если исходник, например, PPTX — пытаемся сразу скопировать с конверсией в Slides
+    # 3) Если исходник PPTX — пытаемся сразу скопировать с конверсией в Slides
     if (
         src_mime
         == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     ):
-        copied = (
-            drive.files()
+        copied = with_retries(
+            lambda: drive.files()
             .copy(
                 fileId=real_id,
                 body={**body, "mimeType": "application/vnd.google-apps.presentation"},
@@ -157,13 +170,19 @@ def export_slides_to_pdf(drive, presentation_id: str) -> bytes:
     downloader = MediaIoBaseDownload(fh, request)
     done = False
     while not done:
-        status, done = downloader.next_chunk()
-        # можно логировать status.progress() при желании
+        # next_chunk тоже под ретраями (429/5xx)
+        status, done = with_retries(lambda: downloader.next_chunk())
+        # при желании можно логировать status.progress()
     return fh.getvalue()
 
 
 def delete_file(drive, file_id: str) -> None:
-    drive.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+    """
+    Удаляет файл по ID.
+    """
+    with_retries(
+        lambda: drive.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -174,7 +193,9 @@ def get_presentation_page_ids(slides, presentation_id: str) -> List[str]:
     """
     Возвращает список pageObjectId всех слайдов презентации (в порядке).
     """
-    pres = slides.presentations().get(presentationId=presentation_id).execute()
+    pres = with_retries(
+        lambda: slides.presentations().get(presentationId=presentation_id).execute()
+    )
     pages = pres.get("slides", [])
     return [p.get("objectId") for p in pages]
 
@@ -184,12 +205,11 @@ def duplicate_slide(slides, presentation_id: str, page_object_id: str) -> str:
     Дублирует указанный слайд. Возвращает objectId созданного слайда.
     """
     req = {"duplicateObject": {"objectId": page_object_id}}
-    resp = (
-        slides.presentations()
+    resp = with_retries(
+        lambda: slides.presentations()
         .batchUpdate(presentationId=presentation_id, body={"requests": [req]})
         .execute()
     )
-
     replies = resp.get("replies", [])
     if not replies:
         raise RuntimeError("Failed to duplicate slide")
@@ -222,9 +242,11 @@ def replace_on_slide(
         )
 
     if requests:
-        slides.presentations().batchUpdate(
-            presentationId=presentation_id, body={"requests": requests}
-        ).execute()
+        with_retries(
+            lambda: slides.presentations()
+            .batchUpdate(presentationId=presentation_id, body={"requests": requests})
+            .execute()
+        )
 
 
 def ensure_pages(
@@ -251,16 +273,15 @@ def ensure_pages(
 # ВЫСОКОУРОВНЕВЫЕ ОБЁРТКИ ДЛЯ ОТЧЁТНОГО ПАЙПЛАЙНА
 
 
-import time
-
-from googleapiclient.errors import HttpError
-
-
 def prepare_presentation_from_template(
     template_id: str,
     title: str,
     parent_folder_id: str,
 ) -> Tuple[str, List[str]]:
+    """
+    Копирует шаблон в целевую папку, ждёт доступности Slides API и возвращает:
+    (presentation_id, [pageObjectId...]).
+    """
     drive, slides, _ = build_services()
     pres_id = copy_slides_to_folder(drive, template_id, title, parent_folder_id)
 

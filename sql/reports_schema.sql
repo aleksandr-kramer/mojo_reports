@@ -146,3 +146,26 @@ JOIN core.ref_programme rp ON rp.programme_code = lp.programme_code
 LEFT JOIN lt              ON lt.lesson_id = l.lesson_id
 LEFT JOIN exp_students es ON es.lesson_id = l.lesson_id
 LEFT JOIN attn_counts ac  ON ac.lesson_id = l.lesson_id;
+
+CREATE TABLE IF NOT EXISTS rep.email_queue (
+    id                bigserial PRIMARY KEY,
+    campaign_id       text        NOT NULL,    -- логическая рассылка/отчёт
+    recipient_email   text        NOT NULL,
+    subject           text        NOT NULL,
+    html_body         text        NOT NULL,
+    attachment_bytes  bytea,                   -- PDF; можно NULL, если без вложения
+    attachment_name   text,
+    status            text        NOT NULL DEFAULT 'pending',  -- pending|sent|error
+    error_msg         text,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    sent_at           timestamptz,
+    try_count         int         NOT NULL DEFAULT 0
+);
+
+-- Антидубль на «кампания+получатель»
+CREATE UNIQUE INDEX IF NOT EXISTS uq_email_queue_campaign_recipient
+ON rep.email_queue (campaign_id, recipient_email) WHERE status <> 'error';
+
+-- статус: pending|processing|sent|error
+CREATE INDEX IF NOT EXISTS ix_email_queue_pending_created
+ON rep.email_queue (status, created_at);

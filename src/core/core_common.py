@@ -246,3 +246,41 @@ def log(msg: str) -> None:
 def validate_window_or_throw(d_from: date, d_to: date) -> None:
     if d_from > d_to:
         raise ValueError(f"Некорректное окно дат: {d_from}..{d_to}")
+
+
+CORE_ORCHESTRATOR_ENDPOINT = "core:orchestrator"
+
+
+def get_core_checkpoint() -> date | None:
+    sql = """
+      SELECT window_to::date
+      FROM core.sync_state
+      WHERE endpoint = %s
+      ORDER BY last_successful_sync_at DESC
+      LIMIT 1;
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (CORE_ORCHESTRATOR_ENDPOINT,))
+        row = cur.fetchone()
+        return row[0] if row and row[0] else None
+
+
+def set_core_checkpoint(window_to: date) -> None:
+    """
+    Фиксируем чекпойнт CORE. В таблице core.sync_state PK = (endpoint),
+    поэтому конфликт ловим по endpoint и там же обновляем окно.
+    Окно расширяем монотонно:
+      window_from = least(старое, новое)
+      window_to   = greatest(старое, новое)
+    """
+    sql = """
+      INSERT INTO core.sync_state(endpoint, window_from, window_to, last_successful_sync_at)
+      VALUES (%s, %s, %s, now())
+      ON CONFLICT (endpoint) DO UPDATE
+        SET window_from = LEAST(COALESCE(core.sync_state.window_from, EXCLUDED.window_from), EXCLUDED.window_from),
+            window_to   = GREATEST(COALESCE(core.sync_state.window_to, EXCLUDED.window_to), EXCLUDED.window_to),
+            last_successful_sync_at = EXCLUDED.last_successful_sync_at;
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (CORE_ORCHESTRATOR_ENDPOINT, window_to, window_to))
+        conn.commit()

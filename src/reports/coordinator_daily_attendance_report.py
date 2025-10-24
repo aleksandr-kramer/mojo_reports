@@ -26,6 +26,7 @@ from googleapiclient.http import MediaIoBaseUpload
 from ..db import get_conn
 from ..google.clients import build_services
 from ..google.gmail_sender import send_email_with_attachment
+from ..google.retry import with_retries
 from ..google.slides_export import (
     delete_file,
     ensure_subfolder,
@@ -343,7 +344,9 @@ def upload_pdf_to_drive(drive, parent_id: str, filename: str, pdf_bytes: bytes) 
         io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False
     )
     meta = {"name": filename, "parents": [parent_id], "mimeType": "application/pdf"}
-    created = drive.files().create(body=meta, media_body=media, fields="id").execute()
+    created = with_retries(
+        lambda: drive.files().create(body=meta, media_body=media, fields="id").execute()
+    )
     return created["id"]
 
 

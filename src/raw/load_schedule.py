@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List
 from ..api.mojo_client import MojoApiClient
 from ..db import get_conn
 from ..settings import CONFIG
-from .base_loader import insert_schedule_lessons_rows
+from .base_loader import insert_schedule_lessons_rows, upsert_sync_state
 from .common import json_source_hash
 
 ENDPOINT = "/schedule"
@@ -118,7 +118,6 @@ def run_init(d_from: date, d_to: date) -> None:
 
     start_w, end_w = week_range(d_from)
     start_w2, end_w2 = week_range(d_to)
-    from ..raw.base_loader import upsert_sync_state
 
     upsert_sync_state(
         endpoint=ENDPOINT,
@@ -169,8 +168,6 @@ def run_daily() -> None:
         f"[schedule][insert] week={start_w}..{end_w} to_insert={to_insert} inserted={inserted}"
     )
 
-    from ..raw.base_loader import upsert_sync_state
-
     upsert_sync_state(
         endpoint=ENDPOINT,
         window_from=start_w,
@@ -219,8 +216,6 @@ def run_backfill(mondays: List[date]) -> None:
     print(
         f"[schedule][insert] weeks={','.join(m.isoformat() for m in uniq_mondays)} to_insert={to_insert} inserted={inserted}"
     )
-
-    from ..raw.base_loader import upsert_sync_state
 
     upsert_sync_state(
         endpoint=ENDPOINT,
