@@ -1,26 +1,70 @@
-# Python
+# -------------------------
+# Python / tooling caches
+# -------------------------
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
-*.pytest_cache/
+.pytest_cache/
 .coverage*
 htmlcov/
+.eggs/
+*.egg-info/
+.mypy_cache/
+.pytype/
+.ruff_cache/
+.cache/
 
-# Virtual env
+# -------------------------
+# Virtual environments
+# -------------------------
 .venv/
-env/
 venv/
+env/
+.python-version
 
-# OS/Editor
+# -------------------------
+# OS / Editors
+# -------------------------
 .DS_Store
 Thumbs.db
+desktop.ini
 .vscode/
+.idea/
+*.swp
+*.swo
 
-# Secrets / local configs
+# -------------------------
+# Env files
+# -------------------------
 .env
-sa.json
+.env.*
+!.env.example
 
-# Data / temp
-tmp/
+# -------------------------
+# Secrets / credentials
+# -------------------------
+secrets/*.json
+secrets/*.pem
+secrets/*.p12
+secrets/*.key
+secrets/*.crt
+# (Если нужно держать пустую папку `secrets/` в репо — добавьте secrets/.gitkeep)
+
+# -------------------------
+# Logs / temp
+# -------------------------
 *.log
+log/
+logs/
+tmp/
+temp/
+
+# -------------------------
+# Local artifacts (runtime/output)
+# -------------------------
+data/
+out/
+output/
+exports/
+.cache_build/
