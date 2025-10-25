@@ -157,14 +157,15 @@ def upsert_sync_state(
 ) -> None:
     """
     Обновляет/вставляет запись о прохождении загрузчика CORE.
+    ВАЖНО: если last_seen_updated_at не передан (None), last_successful_sync_at фиксируется как now().
     """
     sql = """
       INSERT INTO core.sync_state(endpoint, window_from, window_to, last_successful_sync_at, params, notes)
-      VALUES (%s, %s, %s, %s, %s, %s)
+      VALUES (%s, %s, %s, COALESCE(%s, now()), %s, %s)
       ON CONFLICT (endpoint) DO UPDATE
         SET window_from = EXCLUDED.window_from,
             window_to   = EXCLUDED.window_to,
-            last_successful_sync_at = EXCLUDED.last_successful_sync_at,
+            last_successful_sync_at = COALESCE(EXCLUDED.last_successful_sync_at, now()),
             params      = EXCLUDED.params,
             notes       = EXCLUDED.notes;
     """
@@ -175,8 +176,8 @@ def upsert_sync_state(
                 endpoint,
                 window_from,
                 window_to,
-                last_seen_updated_at,
-                json_param(params or {}),
+                last_seen_updated_at,  # может быть None; тогда в INSERT/UPDATE подставится now()
+                json_param(params or {}),  # как и раньше
                 notes,
             ),
         )
