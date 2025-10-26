@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  mojo-db:
+    image: postgres:16
+    container_name: mojo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PGDATABASE:-mojo_reports}
+      POSTGRES_USER: ${PGUSER:-mojo_user}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-Mojo_4507}
+      TZ: Europe/Podgorica
+    volumes:
+      # Хранилище данных БД — именованный том (переживёт пересборки контейнера)
+      - mojo_pgdata:/var/lib/postgresql/data
+      # Первичная инициализация схем — сработает только при пустом датадире
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    # Порт наружу не пробрасываем (не нужен на сервере).
+    # Если локально понадобится — раскомментируйте строку ниже:
+    # ports:
+    #   - "4507:5432"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Какой файл окружения подавать внутрь контейнера:
+    # по умолчанию .env.server, на сервере задаём ENV_FILE=.env.server перед командой compose
+    env_file:
+      - ${ENV_FILE:-.env.server}
+    environment:
+      TZ: Europe/Podgorica
+    depends_on:
+      mojo-db:
+        condition: service_healthy
+    volumes:
+      # SA.json внутрь контейнера в /app/secrets/sa.json (read-only)
+      - ./secrets/sa.json:/app/secrets/sa.json:ro
+    working_dir: /app
+    # Ничего постоянно не крутится — задачи через `docker compose run --rm app ...`
+    # при желании можно добавить ограничения ресурсов (пример ниже, опционально):
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.00'
+    #       memory: 1g
+
+volumes:
+  mojo_pgdata:

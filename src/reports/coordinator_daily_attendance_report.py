@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import argparse
-import calendar
 import io
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -23,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 import pytz
 from googleapiclient.http import MediaIoBaseUpload
 
-from ..db import get_conn
+from ..db import advisory_lock, get_conn
 from ..google.clients import build_services
 from ..google.gmail_sender import send_email_with_attachment
 from ..google.retry import with_retries
@@ -50,24 +49,20 @@ def _tz() -> pytz.BaseTzInfo:
 
 def compute_report_date(explicit: Optional[str] = None) -> date:
     """
-    Если передана дата в формате YYYY-MM-DD — используем её.
-    Иначе берём 'вчерашний учебный день' в таймзоне Europe/Podgorica:
-      - если сегодня Вт–Сб → вчера
-      - если сегодня Вс или Пн → пятница прошлой недели
+    Если передана дата (YYYY-MM-DD) — используем её.
+    Без даты: разрешено только вт–сб → берём «вчера».
+    В вс/пн без --date выходим с ошибкой (отчёт в эти дни не запускается).
     """
     if explicit:
         return datetime.strptime(explicit, "%Y-%m-%d").date()
 
     now_local = datetime.now(_tz())
-    weekday = now_local.weekday()  # 0=Mon ... 6=Sun
-    if weekday in (1, 2, 3, 4):  # Tue..Fri -> yesterday
+    weekday = now_local.weekday()  # 0=Mon .. 6=Sun
+    if weekday in (1, 2, 3, 4, 5):  # Tue..Sat -> yesterday
         return (now_local - timedelta(days=1)).date()
-    elif weekday == 5:  # Sat -> Friday
-        return (now_local - timedelta(days=1)).date()
-    elif weekday == 6:  # Sun -> Friday
-        return (now_local - timedelta(days=2)).date()
-    else:  # Mon -> Friday
-        return (now_local - timedelta(days=3)).date()
+
+    # Sun/Mon without explicit date -> hard stop
+    raise SystemExit("Report is disabled on Sunday/Monday. Use --date=YYYY-MM-DD.")
 
 
 def _already_done(cur, report_key: str, report_date: date, programme_code: str) -> bool:
@@ -387,198 +382,201 @@ def main():
     parser.add_argument("--date", help="YYYY-MM-DD (report date)")
     args = parser.parse_args()
 
-    report_date = compute_report_date(args.date)
+    # защита от параллельного запуска отчётов — на ВЕСЬ прогон
+    with advisory_lock(1003):
+        report_date = compute_report_date(args.date)
 
-    # Конфиг отчёта
-    reports_cfg = CONFIG.get("reports", {}) or {}
-    rpt_cfg = reports_cfg.get("coordinator_daily_attendance", {}) or {}
-    sender = (reports_cfg.get("email", {}) or {}).get("sender")
-    template_id = rpt_cfg.get("template_id")
-    per_slide_max = int(rpt_cfg.get("per_slide_max_rows", 30))
-    parent_folder_id = rpt_cfg.get("parent_folder_id")
-    filename_pattern = rpt_cfg.get(
-        "filename_pattern",
-        "{date}_{programme}_coordinator_daily_attendance_report.pdf",
-    )
-
-    if not (sender and template_id and parent_folder_id):
-        raise RuntimeError(
-            "Missing required config in config.yaml -> reports.coordinator_daily_attendance"
+        # Конфиг отчёта
+        reports_cfg = CONFIG.get("reports", {}) or {}
+        rpt_cfg = reports_cfg.get("coordinator_daily_attendance", {}) or {}
+        sender = (reports_cfg.get("email", {}) or {}).get("sender")
+        template_id = rpt_cfg.get("template_id")
+        per_slide_max = int(rpt_cfg.get("per_slide_max_rows", 30))
+        parent_folder_id = rpt_cfg.get("parent_folder_id")
+        filename_pattern = rpt_cfg.get(
+            "filename_pattern",
+            "{date}_{programme}_coordinator_daily_attendance_report.pdf",
         )
 
-    # Google клиенты
-    drive, slides, gmail = build_services()
-
-    # ОДНО соединение к БД на весь прогон
-    with get_conn() as conn:
-        # Почтовые роли (через одно соединение)
-        acad_cc = []
-        acad_email = load_academic_director_email(conn)
-        if acad_email:
-            acad_cc = [acad_email]
-
-        # Источник данных (вью) — читаем за дату
-        all_rows = load_source_rows(conn, report_date)
-        rows_by_programme: Dict[str, List[dict]] = defaultdict(list)
-        for r in all_rows:
-            rows_by_programme[r["programme_code"]].append(r)
-
-        # Координаторы (по программам)
-        coords_by_programme = load_programme_coordinators(conn)
-
-        # Список программ для рассылки = все, у которых есть координаторы
-        programme_codes = sorted(coords_by_programme.keys())
-
-        # Папки для сохранения
-        month_folder = month_partition_folder(report_date)
-
-        for pcode in programme_codes:
-            coordinators = coords_by_programme.get(pcode, [])
-            if not coordinators:
-                continue  # подстраховка
-
-            pname = coordinators[0]["programme_name"]  # у всех одинаковое
-
-            # ⬇️ вставка анти-дубля:
-            with conn.cursor() as cur:
-                # если _already_done ожидает programme_code — передаём pcode;
-                # если у вас версия с programme_id — передайте id.
-                if _already_done(cur, REPORT_KEY, report_date, pcode):
-                    print(
-                        f"[report] skip: already exists for {report_date} programme={pname}"
-                    )
-                    continue
-
-            # Может быть пусто -> нулевой отчёт
-            prog_rows = rows_by_programme.get(pcode, [])
-
-            allc, regc, unregc, percent = aggregate_metrics(prog_rows)
-            detail = build_detail_rows(prog_rows)
-
-            # Шапка для плейсхолдеров
-            header = {
-                "date": report_date.strftime("%Y-%m-%d"),
-                "programme": pname,
-                "coordinator": choose_coordinator_line(coordinators),
-                "allcountlessons": str(allc),
-                "regcountlessons": str(regc),
-                "unregcountlessons": str(unregc),
-                "percentunreglessons": f"{percent:.1f}",
-            }
-
-            # Пер-слайд маппинги (по 30 строк)
-            per_slide_maps = make_per_slide_mappings(header, detail, per_slide_max)
-
-            # Папки Drive: программа/месяц
-            prog_folder_id = ensure_subfolder(drive, parent_folder_id, pname)
-            month_folder_id = ensure_subfolder(drive, prog_folder_id, month_folder)
-
-            # Временная презентация для рендера
-            title = f"tmp_{REPORT_KEY}_{pcode}_{report_date.isoformat()}"
-            pres_id, _pages = prepare_presentation_from_template(
-                template_id, title, month_folder_id
+        if not (sender and template_id and parent_folder_id):
+            raise RuntimeError(
+                "Missing required config in config.yaml -> reports.coordinator_daily_attendance"
             )
 
-            try:
-                # Рендер и экспорт PDF (байты)
-                pdf_bytes = render_and_export_pdf(
-                    pres_id, per_slide_maps, base_slide_index=0
-                )
+        # Google клиенты
+        drive, slides, gmail = build_services()
 
-                # Имя PDF
-                filename = filename_pattern.format(
-                    date=report_date.strftime("%Y-%m-%d"),
-                    programme=pname.replace("/", "-"),
-                )
+        # ОДНО соединение к БД на весь прогон
+        with get_conn() as conn:
+            # Почтовые роли (через одно соединение)
+            acad_cc = []
+            acad_email = load_academic_director_email(conn)
+            if acad_email:
+                acad_cc = [acad_email]
 
-                # Загрузка PDF в Drive (в папку месяца)
-                pdf_file_id = upload_pdf_to_drive(
-                    drive, month_folder_id, filename, pdf_bytes
-                )
+            # Источник данных (вью) — читаем за дату
+            all_rows = load_source_rows(conn, report_date)
+            rows_by_programme: Dict[str, List[dict]] = defaultdict(list)
+            for r in all_rows:
+                rows_by_programme[r["programme_code"]].append(r)
 
-                # Лог rep.report_run (через текущее соединение, БЕЗ нового get_conn)
+            # Координаторы (по программам)
+            coords_by_programme = load_programme_coordinators(conn)
+
+            # Список программ для рассылки = все, у которых есть координаторы
+            programme_codes = sorted(coords_by_programme.keys())
+
+            # Папки для сохранения
+            month_folder = month_partition_folder(report_date)
+
+            for pcode in programme_codes:
+                coordinators = coords_by_programme.get(pcode, [])
+                if not coordinators:
+                    continue  # подстраховка
+
+                pname = coordinators[0]["programme_name"]  # у всех одинаковое
+
+                # ⬇️ анти-дубль: проверка выполненных прогонов
                 with conn.cursor() as cur:
-                    cur.execute(
-                        SQL_INSERT_RUN,
-                        (
-                            REPORT_KEY,
-                            report_date,
-                            pcode,
-                            pname,
-                            pdf_file_id,
-                            f"mojo_reports/coordinator_daily_attendance_report/{pname}/{month_folder}/{filename}",
-                            len(per_slide_maps),
-                            len(detail),
-                        ),
-                    )
-                    run_id = cur.fetchone()[0]
-                conn.commit()
+                    # если _already_done ожидает programme_code — передаём pcode;
+                    # если у вас версия с programme_id — передайте id.
+                    if _already_done(cur, REPORT_KEY, report_date, pcode):
+                        print(
+                            f"[report] skip: already exists for {report_date} programme={pname}"
+                        )
+                        continue
 
-                # Письмо
-                to_addrs = [c["email"] for c in coordinators if c.get("email")]
-                subject = (
-                    f"Attendance. Ежедневный координаторский отчёт. "
-                    f"{report_date.strftime('%Y-%m-%d')}. Программа: {pname}"
+                # Может быть пусто -> нулевой отчёт
+                prog_rows = rows_by_programme.get(pcode, [])
+
+                allc, regc, unregc, percent = aggregate_metrics(prog_rows)
+                detail = build_detail_rows(prog_rows)
+
+                # Шапка для плейсхолдеров
+                header = {
+                    "date": report_date.strftime("%Y-%m-%d"),
+                    "programme": pname,
+                    "coordinator": choose_coordinator_line(coordinators),
+                    "allcountlessons": str(allc),
+                    "regcountlessons": str(regc),
+                    "unregcountlessons": str(unregc),
+                    "percentunreglessons": f"{percent:.1f}",
+                }
+
+                # Пер-слайд маппинги (по 30 строк)
+                per_slide_maps = make_per_slide_mappings(header, detail, per_slide_max)
+
+                # Папки Drive: программа/месяц
+                prog_folder_id = ensure_subfolder(drive, parent_folder_id, pname)
+                month_folder_id = ensure_subfolder(drive, prog_folder_id, month_folder)
+
+                # Временная презентация для рендера
+                title = f"tmp_{REPORT_KEY}_{pcode}_{report_date.isoformat()}"
+                pres_id, _pages = prepare_presentation_from_template(
+                    template_id, title, month_folder_id
                 )
 
-                # Имя для обращения: primary, иначе — первый
-                greet_full_name = next(
-                    (c["full_name"] for c in coordinators if c.get("is_primary")),
-                    coordinators[0]["full_name"],
-                )
-                first_name = extract_first_name(greet_full_name)
-
-                # HTML-тело письма (минималистичный шаблон)
-                html_body = build_email_html(
-                    first_name=first_name,
-                    date_str=report_date.strftime("%Y-%m-%d"),
-                    programme=pname,
-                    allcount=allc,
-                    regcount=regc,
-                    unregcount=unregc,
-                    percent_unreg=percent,
-                )
-
-                message_id = ""
-                error_text = None
                 try:
-                    message_id = send_email_with_attachment(
-                        sender=sender,
-                        to_addrs=to_addrs,
-                        cc_addrs=acad_cc,
-                        subject=subject,
-                        html_body=html_body,
-                        attachment_bytes=pdf_bytes,
-                        attachment_filename=filename,
+                    # Рендер и экспорт PDF (байты)
+                    pdf_bytes = render_and_export_pdf(
+                        pres_id, per_slide_maps, base_slide_index=0
                     )
-                    ok = True
-                except Exception as e:
-                    ok = False
-                    error_text = str(e)
 
-                # Лог rep.report_delivery_log (то же соединение)
-                with conn.cursor() as cur:
-                    cur.execute(
-                        SQL_INSERT_DELIVERY,
-                        (
-                            run_id,
-                            sender,
-                            ", ".join(to_addrs),
-                            acad_cc if acad_cc else None,
-                            subject,
-                            message_id,
-                            ok,
-                            error_text,
-                        ),
+                    # Имя PDF
+                    filename = filename_pattern.format(
+                        date=report_date.strftime("%Y-%m-%d"),
+                        programme=pname.replace("/", "-"),
                     )
-                conn.commit()
 
-            finally:
-                # Удаляем временную копию Slides
-                try:
-                    delete_file(drive, pres_id)
-                except Exception:
-                    pass
+                    # Загрузка PDF в Drive (в папку месяца)
+                    pdf_file_id = upload_pdf_to_drive(
+                        drive, month_folder_id, filename, pdf_bytes
+                    )
+
+                    # Лог rep.report_run (через текущее соединение, БЕЗ нового get_conn)
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            SQL_INSERT_RUN,
+                            (
+                                REPORT_KEY,
+                                report_date,
+                                pcode,
+                                pname,
+                                pdf_file_id,
+                                f"mojo_reports/coordinator_daily_attendance_report/{pname}/{month_folder}/{filename}",
+                                len(per_slide_maps),
+                                len(detail),
+                            ),
+                        )
+                        run_id = cur.fetchone()[0]
+                    conn.commit()
+
+                    # Письмо
+                    to_addrs = [c["email"] for c in coordinators if c.get("email")]
+                    subject = (
+                        f"Attendance. Ежедневный координаторский отчёт. "
+                        f"{report_date.strftime('%Y-%m-%d')}. Программа: {pname}"
+                    )
+
+                    # Имя для обращения: primary, иначе — первый
+                    greet_full_name = next(
+                        (c["full_name"] for c in coordinators if c.get("is_primary")),
+                        coordinators[0]["full_name"],
+                    )
+                    first_name = extract_first_name(greet_full_name)
+
+                    # HTML-тело письма (минималистичный шаблон)
+                    html_body = build_email_html(
+                        first_name=first_name,
+                        date_str=report_date.strftime("%Y-%m-%d"),
+                        programme=pname,
+                        allcount=allc,
+                        regcount=regc,
+                        unregcount=unregc,
+                        percent_unreg=percent,
+                    )
+
+                    message_id = ""
+                    error_text = None
+                    try:
+                        message_id = send_email_with_attachment(
+                            sender=sender,
+                            to_addrs=to_addrs,
+                            cc_addrs=acad_cc,
+                            subject=subject,
+                            html_body=html_body,
+                            attachment_bytes=pdf_bytes,
+                            attachment_filename=filename,
+                        )
+                        ok = True
+                    except Exception as e:
+                        ok = False
+                        error_text = str(e)
+
+                    # Лог rep.report_delivery_log (то же соединение)
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            SQL_INSERT_DELIVERY,
+                            (
+                                run_id,
+                                sender,
+                                ", ".join(to_addrs),
+                                ", ".join(acad_cc) if acad_cc else None,
+                                subject,
+                                message_id,
+                                ok,
+                                error_text,
+                            ),
+                        )
+
+                    conn.commit()
+
+                finally:
+                    # Удаляем временную копию Slides
+                    try:
+                        delete_file(drive, pres_id)
+                    except Exception:
+                        pass
 
 
 if __name__ == "__main__":

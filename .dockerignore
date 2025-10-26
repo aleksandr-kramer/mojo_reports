@@ -1,0 +1,47 @@
+# -------- базовые директории и файлы, которые в образ не нужны --------
+.git/
+.gitignore
+.gitmodules
+
+# venv / кэш
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.cache/
+
+# IDE/OS мусор
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Логи/времянки/артефакты
+*.log
+log/
+logs/
+tmp/
+temp/
+data/
+out/
+output/
+exports/
+.cache_build/
+
+# Файлы окружения — внутрь образа не кладём
+.env
+.env.*
+!.env.example
+
+# Секреты — не печатать в образ (подмонтируем на runtime)
+secrets/*
