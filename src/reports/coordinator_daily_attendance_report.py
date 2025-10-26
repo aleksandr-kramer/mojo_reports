@@ -122,7 +122,7 @@ RETURNING run_id
 SQL_INSERT_DELIVERY = """
 INSERT INTO rep.report_delivery_log
   (run_id, email_from, email_to, email_cc, subject, message_id, success, details)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s::text[], %s::text[], %s, %s, %s, %s)
 """
 
 
@@ -560,8 +560,8 @@ def main():
                             (
                                 run_id,
                                 sender,
-                                ", ".join(to_addrs),
-                                ", ".join(acad_cc) if acad_cc else None,
+                                to_addrs,  # ← список адресов (['a@b', 'c@d'])
+                                acad_cc or [],  # ← список (пустой, если None)
                                 subject,
                                 message_id,
                                 ok,
