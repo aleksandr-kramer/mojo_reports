@@ -45,3 +45,4 @@ exports/
 
 # Секреты — не печатать в образ (подмонтируем на runtime)
 secrets/*
+README.md
