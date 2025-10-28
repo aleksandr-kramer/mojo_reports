@@ -45,7 +45,7 @@ INSERT INTO core.ref_programme (programme_code, programme_name) VALUES
 ('PEARSON','Pearson'),
 ('IPC','International Primary Curriculum'),
 ('IB','International Baccalaureate'),
-('STATE','State Standard')
+('STATE','National Curriculum')
 ON CONFLICT (programme_code) DO UPDATE
 SET programme_name = EXCLUDED.programme_name;
 

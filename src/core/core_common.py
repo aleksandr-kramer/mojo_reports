@@ -75,16 +75,21 @@ def programme_to_code(name: Optional[str]) -> Optional[str]:
     if not name:
         return None
     n = name.strip().lower()
-    # базовые варианты из наших excel/RAW
     if n in {"pearson", "pearson programme", "pearson edexcel"}:
         return "PEARSON"
     if n in {"ipc", "international primary curriculum"}:
         return "IPC"
     if n in {"ib", "ib dp", "ib diploma", "ib diploma programme"}:
         return "IB"
-    if n in {"state standard", "montenegrin state", "state"}:
+    if n in {
+        "state standard",
+        "montenegrin state",
+        "state",
+        "national curriculum",
+        "national programme",
+        "national program",
+    }:
         return "STATE"
-    # если появятся новые — расширим
     return None
 
 
