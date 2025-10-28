@@ -23,7 +23,6 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY src/ /app/src/
 COPY sql/ /app/sql/
 COPY config/ /app/config/
-COPY README.md /app/README.md
 
 # Создадим непривилегированного пользователя
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
