@@ -150,6 +150,12 @@ def core_run_auto() -> None:
         log("[core:auto] no RAW changes → snapshots only; done")
         return
 
+    # schedule
+    if "/schedule" in changed:
+        f, t = changed["/schedule"]
+        validate_window_or_throw(f, t)
+        run_schedule(mode="backfill", d_from=f, d_to=t)
+
     # attendance
     if "/attendance" in changed:
         f, t = changed["/attendance"]
@@ -167,12 +173,6 @@ def core_run_auto() -> None:
         t = max(w[1] for w in candidates)
         validate_window_or_throw(f, t)
         run_marks(mode="backfill", d_from=f, d_to=t)
-
-    # schedule
-    if "/schedule" in changed:
-        f, t = changed["/schedule"]
-        validate_window_or_throw(f, t)
-        run_schedule(mode="backfill", d_from=f, d_to=t)
 
     # Производные витрины
     run_groups()
@@ -207,9 +207,10 @@ def core_weekly_deep(force: bool = False) -> None:
     run_people(mode="backfill", d_from=d_from, d_to=d_to)
     run_classes(mode="backfill", d_from=d_from, d_to=d_to)
 
+    # сначала расписание/уроки, затем посещаемость
+    run_schedule(mode="backfill", d_from=d_from, d_to=d_to)
     run_attendance(mode="backfill", d_from=d_from, d_to=d_to)
     run_marks(mode="backfill", d_from=d_from, d_to=d_to)
-    run_schedule(mode="backfill", d_from=d_from, d_to=d_to)
 
     run_groups()
 
