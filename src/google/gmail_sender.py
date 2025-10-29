@@ -87,3 +87,49 @@ def send_email_with_attachment(
         # отдаём понятную ошибку наверх — пусть оркестратор решит, что делать
         raise
     return sent.get("id", "")
+
+
+def send_email_with_attachments(
+    gmail,
+    sender: str,
+    to: list[str] | str,
+    subject: str,
+    html_body: str,
+    attachments: list[tuple[bytes, str]],
+    cc: list[str] | None = None,
+):
+    """
+    Отправка письма с несколькими вложениями.
+    attachments: список (bytes, filename)
+    """
+    from email import encoders
+    from email.mime.base import MIMEBase
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    if isinstance(to, str):
+        to_list = [to]
+    else:
+        to_list = list(to or [])
+    cc_list = list(cc or [])
+
+    msg = MIMEMultipart()
+    msg["From"] = sender
+    msg["To"] = ", ".join(to_list)
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
+    msg["Subject"] = subject
+
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    for blob, fname in attachments:
+        part = MIMEBase("application", "pdf")
+        part.set_payload(blob)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f'attachment; filename="{fname}"')
+        msg.attach(part)
+
+    raw_msg = {"raw": base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")}
+    resp = gmail.users().messages().send(userId="me", body=raw_msg).execute()
+    return resp.get("id", "")
+

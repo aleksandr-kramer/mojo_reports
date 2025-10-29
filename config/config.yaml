@@ -53,8 +53,12 @@ reports:
     parent_folder_id: "1dsk_CUXZKzr0fA1ZsPdLm6X90gYvGReu"
     template_id: "1aRiIjrCY8bE32Jvqdub0SJPc7pGy7i1X"
     per_slide_max_rows: 30
-    # Имя PDF: [дата]_[programme]_coordinator_daily_attendance_report.pdf
     filename_pattern: "{date}_{programme}_coordinator_daily_attendance_report.pdf"
+  coordinator_daily_assessment:
+    parent_folder_id: "1dsk_CUXZKzr0fA1ZsPdLm6X90gYvGReu" # тот же корень, что у attendance
+    template_id: "1P7cSQDCyT9h9DMNWVETGCpS8OCEFXk_B"
+    per_slide_max_rows: 30
+    filename_pattern: "{date}_{programme}_coordinator_daily_assessment_report.pdf"
 
 google:
   rate_limits:

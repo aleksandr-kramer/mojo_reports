@@ -169,3 +169,125 @@ ON rep.email_queue (campaign_id, recipient_email) WHERE status <> 'error';
 -- статус: pending|processing|sent|error
 CREATE INDEX IF NOT EXISTS ix_email_queue_pending_created
 ON rep.email_queue (status, created_at);
+
+-- ---------------------------------------------------------------------------
+-- VIEВ: rep.v_coord_daily_assessment_lessons
+-- Единица: (report_date, group_id, lesson_date) где В ТУ ЖЕ report_date учитель ставил любые оценки.
+-- Поля:
+--   programme_code / programme_name   -- для маршрутизации к координатору
+--   staff_id / staff_name / staff_email -- основной преподаватель по правилу: core.group_staff_assignment на дату,
+--                                         при ко-ведении предпочитаем is_primary из lesson_staff; иначе min(staff_id)
+--   group_name
+--   has_unweighted  -- признак: есть ли в этом "уроке" любая оценка с weight_pct IS NULL
+-- ВАЖНО: "report_date" = created_at_src::date (день, когда ставили оценки), "lesson_date" = дата самого урока.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW rep.v_coord_daily_assessment_lessons AS
+WITH marks AS (
+  SELECT
+    -- учитываем локальную TZ отчёта
+    (mc.created_at_src AT TIME ZONE 'Europe/Podgorica')::date AS report_date,
+    mc.group_id,
+    mc.lesson_date::date AS lesson_date,
+    COUNT(*) AS cnt_marks,
+    COUNT(*) FILTER (WHERE mc.weight_pct IS NULL) AS cnt_unweighted
+  FROM core.mark_current mc
+  WHERE mc.created_at_src IS NOT NULL
+  GROUP BY 1,2,3
+),
+groups AS (
+  SELECT tg.group_id, tg.group_name
+  FROM core.teaching_group tg
+),
+-- доминирующая программа группы на дату lesson_date
+members_on_date AS (
+  SELECT
+    m.group_id,
+    m.lesson_date AS ref_date,
+    st.programme_code
+  FROM marks m
+  JOIN core.group_student_membership gsm
+    ON gsm.group_id = m.group_id
+   AND m.lesson_date BETWEEN gsm.valid_from AND COALESCE(gsm.valid_to, m.lesson_date)
+  JOIN core.student st ON st.student_id = gsm.student_id
+),
+dom_programme AS (
+  SELECT
+    m.group_id,
+    m.lesson_date AS ref_date,
+    (ARRAY_AGG(programme_code ORDER BY cnt DESC, programme_code))[1] AS programme_code
+  FROM (
+    SELECT group_id, ref_date, programme_code, COUNT(*) AS cnt
+    FROM members_on_date
+    GROUP BY 1,2,3
+  ) AS s
+  JOIN (SELECT DISTINCT group_id, lesson_date FROM marks) m
+    ON m.group_id = s.group_id AND m.lesson_date = s.ref_date
+  GROUP BY 1,2
+),
+prog_named AS (
+  SELECT
+    dp.group_id,
+    dp.ref_date,
+    dp.programme_code,
+    rp.programme_name
+  FROM dom_programme dp
+  LEFT JOIN core.ref_programme rp ON rp.programme_code = dp.programme_code
+),
+-- кандидаты преподавателей по интервалам
+staff_candidates AS (
+  SELECT
+    m.report_date,
+    m.group_id,
+    m.lesson_date,
+    gsa.staff_id
+  FROM marks m
+  JOIN core.group_staff_assignment gsa
+    ON gsa.group_id = m.group_id
+   AND m.lesson_date BETWEEN gsa.valid_from AND COALESCE(gsa.valid_to, m.lesson_date)
+),
+
+-- флаг is_primary по урокам на ту же дату (если есть расписание); иначе NULL
+primary_flags AS (
+  SELECT DISTINCT
+    ts.group_id,
+    l.lesson_date::date AS lesson_date,
+    ls.staff_id,
+    ls.is_primary
+  FROM core.lesson l
+  JOIN core.timetable_schedule ts ON ts.schedule_id = l.schedule_id
+  JOIN core.lesson_staff ls       ON ls.lesson_id   = l.lesson_id
+),
+staff_picked AS (
+  SELECT sc.report_date, sc.group_id, sc.lesson_date, sc.staff_id,
+         ROW_NUMBER() OVER (
+           PARTITION BY sc.report_date, sc.group_id, sc.lesson_date
+           ORDER BY COALESCE(pf.is_primary, FALSE) DESC, sc.staff_id
+         ) AS rn
+  FROM staff_candidates sc
+  LEFT JOIN primary_flags pf
+    ON pf.group_id   = sc.group_id
+   AND pf.lesson_date = sc.lesson_date
+   AND pf.staff_id    = sc.staff_id
+),
+main_staff AS (
+  SELECT report_date, group_id, lesson_date, staff_id
+  FROM staff_picked
+  WHERE rn = 1
+)
+SELECT
+  m.report_date,
+  COALESCE(pn.programme_code, 'UNKNOWN') AS programme_code,
+  COALESCE(pn.programme_name, 'Unknown programme') AS programme_name,
+  m.group_id,
+  g.group_name,
+  m.lesson_date,
+  st.staff_id,
+  s.staff_name,
+  s.email AS staff_email,
+  (m.cnt_unweighted > 0) AS has_unweighted
+FROM marks m
+JOIN groups g       ON g.group_id = m.group_id
+LEFT JOIN prog_named pn ON pn.group_id = m.group_id AND pn.ref_date = m.lesson_date
+LEFT JOIN main_staff st ON st.group_id = m.group_id AND st.lesson_date = m.lesson_date AND st.report_date = m.report_date
+LEFT JOIN core.staff s  ON s.staff_id = st.staff_id
+;

@@ -24,7 +24,10 @@ from googleapiclient.http import MediaIoBaseUpload
 
 from ..db import advisory_lock, get_conn
 from ..google.clients import build_services
-from ..google.gmail_sender import send_email_with_attachment
+from ..google.gmail_sender import (
+    send_email_with_attachment,
+    send_email_with_attachments,
+)
 from ..google.retry import with_retries
 from ..google.slides_export import (
     delete_file,
@@ -35,6 +38,7 @@ from ..google.slides_export import (
 from ..settings import CONFIG, settings
 
 REPORT_KEY = "coord_daily_attendance"
+REPORT_KEY2 = "coord_daily_assessment"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -122,7 +126,7 @@ RETURNING run_id
 SQL_INSERT_DELIVERY = """
 INSERT INTO rep.report_delivery_log
   (run_id, email_from, email_to, email_cc, subject, message_id, success, details)
-VALUES (%s, %s, %s::text[], %s::text[], %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s::text[], %s, %s, %s, %s)
 """
 
 
@@ -135,6 +139,21 @@ def load_source_rows(conn, report_date: date) -> List[dict]:
     """Читает строки из вью-источника на нужную дату, используя переданное соединение."""
     with conn.cursor() as cur:
         cur.execute(SQL_SRC_BY_DATE, (report_date,))
+        cols = [d.name for d in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def load_assessment_rows(conn, report_date: date) -> List[dict]:
+    sql = """
+      SELECT report_date, programme_code, programme_name,
+             group_id, group_name, lesson_date,
+             staff_id, staff_name, staff_email, has_unweighted
+      FROM rep.v_coord_daily_assessment_lessons
+      WHERE report_date = %s
+      ORDER BY programme_code, staff_name NULLS LAST, group_name, lesson_date;
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (report_date,))
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
@@ -199,6 +218,48 @@ def build_detail_rows(rows: List[dict]) -> List[Tuple[str, str, str]]:
     return details
 
 
+def aggregate_assessment_metrics(rows: List[dict]) -> tuple[int, int, int]:
+    """
+    rows — все уроки с оценками за report_date (для программы),
+    где каждая строка = (group_id, lesson_date), has_unweighted — признак.
+    Возвращаем:
+      allcountmarklessons, unformcountlessons, formcountlessons
+    """
+    if not rows:
+        return 0, 0, 0
+    # уникализируем по (group_id, lesson_date)
+    keys = {(r["group_id"], r["lesson_date"]) for r in rows}
+    allc = len(keys)
+    unform = {
+        (r["group_id"], r["lesson_date"]) for r in rows if r.get("has_unweighted")
+    }
+    unformc = len(unform)
+    formc = allc - unformc
+    return allc, unformc, formc
+
+
+def build_assessment_detail_rows(rows: List[dict]) -> List[Tuple[str, str, str]]:
+    """
+    Детализация — только уроки с has_unweighted = TRUE.
+    Возвращаем список кортежей:
+      (teacher_name, "YYYY-MM-DD", group_name)
+    — под формат make_per_slide_mappings(...)
+    """
+    details: List[Tuple[str, str, str]] = []
+    for r in rows:
+        if not r.get("has_unweighted"):
+            continue
+        teacher = r.get("staff_name") or ""
+        lesson_date_str = (
+            r["lesson_date"].strftime("%Y-%m-%d") if r.get("lesson_date") else ""
+        )
+        group_name = r.get("group_name") or ""
+        details.append((teacher, lesson_date_str, group_name))
+    # можно отсортировать по учителю и дате, чтобы было стабильно
+    details.sort(key=lambda x: (x[0], x[1], x[2]))
+    return details
+
+
 def choose_coordinator_line(coordinators: List[dict]) -> str:
     """
     Возвращает строку для {{coordinator}}:
@@ -235,10 +296,14 @@ def build_email_html(
     regcount: int,
     unregcount: int,
     percent_unreg: float,
+    all_m: int,
+    form_m: int,
+    unform_m: int,
 ) -> str:
     """
-    Формирует минималистичное HTML-тело письма.
-    Если unregcount == 0 — добавляет строку 'На дату отчёта все уроки отмечены полностью.'
+    Формирует HTML-тело письма.
+    Блок 1 — посещаемость (как было).
+    Блок 2 — оценки, выставленные учителями в отчётный день (новый раздел, стиль идентичен блоку 1).
     """
     optional_zero = ""
     if unregcount == 0:
@@ -268,7 +333,7 @@ def build_email_html(
                 Уважаемая(ый), <strong>{first_name}</strong>
               </p>
               <p style="margin:0;color:#555;">
-                Данное письмо является ежедневным отчётом по регистрации учителями посещаемости уроков.
+                Данное письмо является ежедневным отчётом по регистрации учителями посещаемости и оценивании на уроках.
               </p>
             </td>
           </tr>
@@ -289,6 +354,7 @@ def build_email_html(
             </td>
           </tr>
 
+          <!-- Блок 1: посещаемость -->
           <tr>
             <td style="padding:16px 24px 8px 24px;">
               <p style="margin:0 0 8px 0;font-size:16px;"><strong>Итоги за {date_str}:</strong></p>
@@ -309,6 +375,31 @@ def build_email_html(
                 </p>
                 <p style="margin:0;color:#333;">
                   По каждому проблемному уроку указаны преподаватель, время и название группы.
+                </p>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Блок 2: оценки без выбора форм -->
+          <tr>
+            <td style="padding:16px 24px 8px 24px;">
+              <p style="margin:0 0 8px 0;font-size:16px;"><strong>Оценки, выставленные учителями {date_str}:</strong></p>
+              <ul style="margin:0;padding:0 0 0 18px;">
+                <li style="margin:0 0 4px 0;">Общее количество уроков с оцениванием: <strong>{all_m}</strong></li>
+                <li style="margin:0 0 4px 0;">Количество уроков с выбором форм работ: <strong>{form_m}</strong></li>
+                <li style="margin:0 0 0 0;">Количество уроков без выбора форм работ: <strong>{unform_m}</strong></li>
+              </ul>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:16px 24px 24px 24px;">
+              <div style="border-left:3px solid #eaeaea;padding:12px 16px;background:#fafafa;">
+                <p style="margin:0 0 6px 0;color:#333;">
+                  При наличии уроков без выбора формы работ смотри вложение (PDF).
+                </p>
+                <p style="margin:0;color:#333;">
+                  По каждому проблемному уроку указаны преподаватель, дата урока и название группы.
                 </p>
               </div>
             </td>
@@ -398,6 +489,17 @@ def main():
             "{date}_{programme}_coordinator_daily_attendance_report.pdf",
         )
 
+        # настройки второго PDF (оценки без формы)
+        rpt2_cfg = (
+            CONFIG.get("reports", {}).get("coordinator_daily_assessment", {}) or {}
+        )
+        template2_id = rpt2_cfg.get("template_id")
+        per_slide2_max = int(rpt2_cfg.get("per_slide_max_rows", 30))
+        filename2_pattern = rpt2_cfg.get(
+            "filename_pattern",
+            "{date}_{programme}_coordinator_daily_assessment_report.pdf",
+        )
+
         if not (sender and template_id and parent_folder_id):
             raise RuntimeError(
                 "Missing required config in config.yaml -> reports.coordinator_daily_attendance"
@@ -416,6 +518,13 @@ def main():
 
             # Источник данных (вью) — читаем за дату
             all_rows = load_source_rows(conn, report_date)
+
+            # Второй источник: уроки с оценками (все) + флаг has_unweighted
+            ass_rows = load_assessment_rows(conn, report_date)
+            ass_by_programme: Dict[str, List[dict]] = defaultdict(list)
+            for r in ass_rows:
+                ass_by_programme[r["programme_code"]].append(r)
+
             rows_by_programme: Dict[str, List[dict]] = defaultdict(list)
             for r in all_rows:
                 rows_by_programme[r["programme_code"]].append(r)
@@ -477,23 +586,21 @@ def main():
                 )
 
                 try:
-                    # Рендер и экспорт PDF (байты)
-                    pdf_bytes = render_and_export_pdf(
+                    # ── PDF #1 (attendance): рендер + загрузка
+                    pdf_bytes_1 = render_and_export_pdf(
                         pres_id, per_slide_maps, base_slide_index=0
                     )
 
-                    # Имя PDF
-                    filename = filename_pattern.format(
+                    filename_1 = filename_pattern.format(
                         date=report_date.strftime("%Y-%m-%d"),
                         programme=pname.replace("/", "-"),
                     )
 
-                    # Загрузка PDF в Drive (в папку месяца)
-                    pdf_file_id = upload_pdf_to_drive(
-                        drive, month_folder_id, filename, pdf_bytes
+                    pdf_file_id_1 = upload_pdf_to_drive(
+                        drive, month_folder_id, filename_1, pdf_bytes_1
                     )
 
-                    # Лог rep.report_run (через текущее соединение, БЕЗ нового get_conn)
+                    # Лог rep.report_run по первому PDF
                     with conn.cursor() as cur:
                         cur.execute(
                             SQL_INSERT_RUN,
@@ -502,31 +609,90 @@ def main():
                                 report_date,
                                 pcode,
                                 pname,
-                                pdf_file_id,
-                                f"mojo_reports/coordinator_daily_attendance_report/{pname}/{month_folder}/{filename}",
+                                pdf_file_id_1,
+                                f"mojo_reports/coordinator_daily_attendance_report/{pname}/{month_folder}/{filename_1}",
                                 len(per_slide_maps),
                                 len(detail),
                             ),
                         )
-                        run_id = cur.fetchone()[0]
+                        run_id_att = cur.fetchone()[0]
                     conn.commit()
 
-                    # Письмо
+                    # ── Готовим второй (assessment): метрики + (опционально) PDF #2
+                    ass_prog_rows = ass_by_programme.get(pcode, [])
+                    all_m, unform_m, form_m = aggregate_assessment_metrics(
+                        ass_prog_rows
+                    )
+                    detail2 = build_assessment_detail_rows(ass_prog_rows)
+
+                    pres2_id = None
+                    pdf_bytes_2 = None
+                    filename_2 = None
+                    pdf_file_id_2 = None
+
+                    if unform_m > 0 and template2_id:
+                        # Вторая временная презентация (assessment)
+                        title2 = f"tmp_{REPORT_KEY2}_{pcode}_{report_date.isoformat()}"
+                        pres2_id, _pages2 = prepare_presentation_from_template(
+                            template2_id, title2, month_folder_id
+                        )
+
+                        # Шапка для второго PDF
+                        header2 = {
+                            "date": report_date.strftime("%Y-%m-%d"),
+                            "programme": pname,
+                            "coordinator": choose_coordinator_line(coordinators),
+                            "allcountmarklessons": str(all_m),
+                            "unformcountlessons": str(unform_m),
+                            "formcountlessons": str(form_m),
+                        }
+                        per_slide_maps2 = make_per_slide_mappings(
+                            header2, detail2, per_slide2_max
+                        )
+
+                        # Рендер + загрузка PDF #2
+                        pdf_bytes_2 = render_and_export_pdf(
+                            pres2_id, per_slide_maps2, base_slide_index=0
+                        )
+                        filename_2 = filename2_pattern.format(
+                            date=report_date.strftime("%Y-%m-%d"),
+                            programme=pname.replace("/", "-"),
+                        )
+                        pdf_file_id_2 = upload_pdf_to_drive(
+                            drive, month_folder_id, filename_2, pdf_bytes_2
+                        )
+
+                        # Лог rep.report_run по второму PDF
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                SQL_INSERT_RUN,
+                                (
+                                    REPORT_KEY2,
+                                    report_date,
+                                    pcode,
+                                    pname,
+                                    pdf_file_id_2,
+                                    f"mojo_reports/coordinator_daily_assessment_report/{pname}/{month_folder}/{filename_2}",
+                                    len(per_slide_maps2),
+                                    len(detail2),
+                                ),
+                            )
+                        conn.commit()
+
+                    # ── Письмо: HTML (attendance) + доп.блок по оценкам
                     to_addrs = [c["email"] for c in coordinators if c.get("email")]
+                    to_addrs_str = ", ".join(to_addrs)
                     subject = (
-                        f"Attendance. Ежедневный координаторский отчёт. "
-                        f"{report_date.strftime('%Y-%m-%d')}. Программа: {pname}"
+                        f"Daily report · {report_date.strftime('%Y-%m-%d')} · {pname}"
                     )
 
-                    # Имя для обращения: primary, иначе — первый
                     greet_full_name = next(
                         (c["full_name"] for c in coordinators if c.get("is_primary")),
                         coordinators[0]["full_name"],
                     )
                     first_name = extract_first_name(greet_full_name)
 
-                    # HTML-тело письма (минималистичный шаблон)
-                    html_body = build_email_html(
+                    html_body_final = build_email_html(
                         first_name=first_name,
                         date_str=report_date.strftime("%Y-%m-%d"),
                         programme=pname,
@@ -534,47 +700,63 @@ def main():
                         regcount=regc,
                         unregcount=unregc,
                         percent_unreg=percent,
+                        all_m=all_m,
+                        form_m=form_m,
+                        unform_m=unform_m,
                     )
 
+                    # Вложения: всегда attendance; assessment — только если есть проблемные уроки
+                    attachments = [(pdf_bytes_1, filename_1)]
+                    if pdf_bytes_2 and filename_2:
+                        attachments.append((pdf_bytes_2, filename_2))
+
+                    # Единая отправка
                     message_id = ""
                     error_text = None
                     try:
-                        message_id = send_email_with_attachment(
-                            sender=sender,
-                            to_addrs=to_addrs,
-                            cc_addrs=acad_cc,
-                            subject=subject,
-                            html_body=html_body,
-                            attachment_bytes=pdf_bytes,
-                            attachment_filename=filename,
+                        message_id = (
+                            send_email_with_attachments(
+                                gmail=gmail,
+                                sender=sender,
+                                to=to_addrs,
+                                cc=acad_cc,
+                                subject=subject,
+                                html_body=html_body_final,
+                                attachments=attachments,
+                            )
+                            or ""
                         )
                         ok = True
                     except Exception as e:
                         ok = False
                         error_text = str(e)
 
-                    # Лог rep.report_delivery_log (то же соединение)
+                    # Лог доставки (одна запись на письмо, привязываем к run_id_att)
                     with conn.cursor() as cur:
                         cur.execute(
                             SQL_INSERT_DELIVERY,
                             (
-                                run_id,
+                                run_id_att,
                                 sender,
-                                to_addrs,  # ← список адресов (['a@b', 'c@d'])
-                                acad_cc or [],  # ← список (пустой, если None)
+                                to_addrs_str,
+                                acad_cc or [],
                                 subject,
                                 message_id,
                                 ok,
                                 error_text,
                             ),
                         )
-
                     conn.commit()
 
                 finally:
-                    # Удаляем временную копию Slides
+                    # Удаляем временные копии Slides (обе, если создавали)
                     try:
                         delete_file(drive, pres_id)
+                    except Exception:
+                        pass
+                    try:
+                        if pres2_id:
+                            delete_file(drive, pres2_id)
                     except Exception:
                         pass
 
