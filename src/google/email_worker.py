@@ -57,7 +57,7 @@ def _mark_sent(id_: int):
 def _mark_error(id_: int, err: str):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE rep.email_queue SET status='error', error_msg=%s, try_count=try_count+1 WHERE id=%s",
+            "UPDATE rep.email_queue SET status='error', error_msg=%s WHERE id=%s",
             (
                 err,
                 id_,
@@ -94,6 +94,13 @@ def _count_sent_last_hour() -> int:
 def run_forever(sender: str):
     consecutive_errors = 0
     while True:
+        # если подряд было слишком много ошибок — делаем передышку
+        if consecutive_errors >= MAX_ERR:
+            time.sleep(
+                120
+            )  # пауза 2 минуты; значение можно вынести в конфиг при желании
+            consecutive_errors = 0
+
         # лимит на час
         if _count_sent_last_hour() >= MAX_PER_HOUR:
             time.sleep(60)  # ждём минуту и проверяем снова
@@ -125,6 +132,8 @@ def run_forever(sender: str):
                 # защитим вызов ретраями по сетевым/квотным ошибкам
                 with_retries(_send_one, attempts=8, base=1.0, cap=64.0)
                 _mark_sent(id_)
+                consecutive_errors = 0
+
             except HttpError as e:
                 _bump_try(id_)
                 # перманентные ошибки (напр., 400 invalidArgument) помечаем 'error' сразу
@@ -145,12 +154,15 @@ def run_forever(sender: str):
                         _mark_error(id_, f"HttpError {status}: {e}")
                     else:
                         _mark_processing_to_pending(id_)
+                consecutive_errors += 1
+
             except Exception as e:
                 _bump_try(id_)
                 if (try_count + 1) >= MAX_TRIES_PER_MESSAGE:
                     _mark_error(id_, f"{type(e).__name__}: {e}")
                 else:
                     _mark_processing_to_pending(id_)
+                consecutive_errors += 1
 
             # пауза между письмами
             time.sleep(MIN_GAP)
