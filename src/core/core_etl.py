@@ -126,61 +126,67 @@ def core_init_if_empty() -> None:
 def core_run_auto() -> None:
     """
     Ежедневный проход CORE:
-      - читаем чекпойнт CORE;
+      - читаем и нормализуем чекпойнт CORE (не дальше «сегодня»);
       - собираем изменившиеся окна RAW после чекпойнта;
       - обновляем CORE только в этих диапазонах;
-      - обновляем чекпойнт CORE.
+      - обновляем чекпойнт CORE (не дальше «сегодня»).
     """
+    today = _today()
+
+    # 1) Читаем чекпойнт и страхуемся от «будущей» даты
     last_cp = get_core_checkpoint()
+    if last_cp and last_cp > today:
+        last_cp = today
+
+    # 2) Ищем изменившиеся окна RAW, начиная с (нормализованного) чекпойнта
     changed = _read_recent_raw_windows(since=last_cp)
 
     log(
         f"[core:auto] last_checkpoint={last_cp} changed_endpoints={list(changed.keys()) or '∅'}"
     )
 
-    # Сначала «снапшоты» (обновляются всегда)
+    # 3) «Снапшоты» обновляются всегда
     run_refs(mode="daily", d_from=None, d_to=None)
     run_people(mode="daily", d_from=None, d_to=None)
     run_classes(mode="daily", d_from=None, d_to=None)
 
+    # 4) Если RAW-изменений нет — только производные и чекпойнт = сегодня
     if not changed:
-        # Только производные и чекпойнт «на сегодня»
         run_groups()
-        set_core_checkpoint(_today())
+        set_core_checkpoint(today)
         log("[core:auto] no RAW changes → snapshots only; done")
         return
 
-    # schedule
+    # 5) Обрабатываем изменившиеся окна по эндпоинтам
     if "/schedule" in changed:
         f, t = changed["/schedule"]
         validate_window_or_throw(f, t)
         run_schedule(mode="backfill", d_from=f, d_to=t)
 
-    # attendance
     if "/attendance" in changed:
         f, t = changed["/attendance"]
         validate_window_or_throw(f, t)
         run_attendance(mode="backfill", d_from=f, d_to=t)
 
-    # marks: объединяем current + final
     if ("/marks/current" in changed) or ("/marks/final" in changed):
-        candidates = []
+        windows = []
         if "/marks/current" in changed:
-            candidates.append(changed["/marks/current"])
+            windows.append(changed["/marks/current"])
         if "/marks/final" in changed:
-            candidates.append(changed["/marks/final"])
-        f = min(w[0] for w in candidates)
-        t = max(w[1] for w in candidates)
+            windows.append(changed["/marks/final"])
+        f = min(w[0] for w in windows)
+        t = max(w[1] for w in windows)
         validate_window_or_throw(f, t)
         run_marks(mode="backfill", d_from=f, d_to=t)
 
-    # Производные витрины
+    # 6) Производные витрины
     run_groups()
 
-    # чекпойнт = max(window_to) из всех изменившихся окон
+    # 7) Новый чекпойнт: не дальше «сегодня», чтобы не «терять» дни
     max_to = max([t for (_, t) in changed.values()])
-    set_core_checkpoint(max_to)
-    log(f"[core:auto] done; checkpoint={max_to}")
+    safe_max_to = min(max_to, today)
+    set_core_checkpoint(safe_max_to)
+    log(f"[core:auto] done; checkpoint={safe_max_to}")
 
 
 def core_weekly_deep(force: bool = False) -> None:
