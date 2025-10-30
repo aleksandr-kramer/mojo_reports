@@ -128,7 +128,7 @@ def core_run_auto() -> None:
     Ежедневный проход CORE:
       - читаем и нормализуем чекпойнт CORE (не дальше «сегодня»);
       - собираем изменившиеся окна RAW после чекпойнта;
-      - обновляем CORE только в этих диапазонах;
+      - обновляем CORE только в этих диапазонах (с обрезкой верхней границы до «сегодня»);
       - обновляем чекпойнт CORE (не дальше «сегодня»).
     """
     today = _today()
@@ -136,6 +136,7 @@ def core_run_auto() -> None:
     # 1) Читаем чекпойнт и страхуемся от «будущей» даты
     last_cp = get_core_checkpoint()
     if last_cp and last_cp > today:
+        log(f"[core:auto] future checkpoint detected ({last_cp}) → clamp to {today}")
         last_cp = today
 
     # 2) Ищем изменившиеся окна RAW, начиная с (нормализованного) чекпойнта
@@ -157,14 +158,20 @@ def core_run_auto() -> None:
         log("[core:auto] no RAW changes → snapshots only; done")
         return
 
+    # Вспомогательная функция: обрезаем верхнюю границу окна до «сегодня»
+    def _clamp_to_today(f, t):
+        return (f, t if t <= today else today)
+
     # 5) Обрабатываем изменившиеся окна по эндпоинтам
     if "/schedule" in changed:
         f, t = changed["/schedule"]
+        f, t = _clamp_to_today(f, t)
         validate_window_or_throw(f, t)
         run_schedule(mode="backfill", d_from=f, d_to=t)
 
     if "/attendance" in changed:
         f, t = changed["/attendance"]
+        f, t = _clamp_to_today(f, t)
         validate_window_or_throw(f, t)
         run_attendance(mode="backfill", d_from=f, d_to=t)
 
@@ -176,6 +183,7 @@ def core_run_auto() -> None:
             windows.append(changed["/marks/final"])
         f = min(w[0] for w in windows)
         t = max(w[1] for w in windows)
+        f, t = _clamp_to_today(f, t)
         validate_window_or_throw(f, t)
         run_marks(mode="backfill", d_from=f, d_to=t)
 
@@ -183,7 +191,13 @@ def core_run_auto() -> None:
     run_groups()
 
     # 7) Новый чекпойнт: не дальше «сегодня», чтобы не «терять» дни
-    max_to = max([t for (_, t) in changed.values()])
+    #    (берём max(window_to) по всем изменившимся окнам, но с обрезкой до today)
+    _clamped_to_list = []
+    for _, (wf, wt) in changed.items():
+        cf, ct = _clamp_to_today(wf, wt)
+        _clamped_to_list.append(ct)
+
+    max_to = max(_clamped_to_list)
     safe_max_to = min(max_to, today)
     set_core_checkpoint(safe_max_to)
     log(f"[core:auto] done; checkpoint={safe_max_to}")

@@ -271,22 +271,26 @@ def get_core_checkpoint() -> date | None:
         return row[0] if row and row[0] else None
 
 
+CORE_ORCHESTRATOR_ENDPOINT = "core:orchestrator"
+
+
 def set_core_checkpoint(window_to: date) -> None:
     """
-    Фиксируем чекпойнт CORE. В таблице core.sync_state PK = (endpoint),
-    поэтому конфликт ловим по endpoint и там же обновляем окно.
-    Окно расширяем монотонно:
-      window_from = least(старое, новое)
-      window_to   = greatest(старое, новое)
+    Фиксируем чекпойнт CORE, **жёстко ограничивая** его не дальше сегодняшней даты.
+    Разрешаем "сдвиг назад", если в БД ранее случайно попала будущая дата.
     """
+    # NB: используем UTC-дату, чтобы не упереться в локальные зоны
+
+    target = min(window_to, today_utc_date())
+
     sql = """
-      INSERT INTO core.sync_state(endpoint, window_from, window_to, last_successful_sync_at)
-      VALUES (%s, %s, %s, now())
-      ON CONFLICT (endpoint) DO UPDATE
-        SET window_from = LEAST(COALESCE(core.sync_state.window_from, EXCLUDED.window_from), EXCLUDED.window_from),
-            window_to   = GREATEST(COALESCE(core.sync_state.window_to, EXCLUDED.window_to), EXCLUDED.window_to),
-            last_successful_sync_at = EXCLUDED.last_successful_sync_at;
+    INSERT INTO core.sync_state(endpoint, window_from, window_to, last_successful_sync_at)
+    VALUES (%s, %s, %s, now())
+    ON CONFLICT (endpoint) DO UPDATE
+      SET window_from = LEAST(COALESCE(core.sync_state.window_from, EXCLUDED.window_from), EXCLUDED.window_from),
+          window_to   = EXCLUDED.window_to,  -- <− не GREATEST: позволяем уменьшать до "сегодня"
+          last_successful_sync_at = EXCLUDED.last_successful_sync_at;
     """
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, (CORE_ORCHESTRATOR_ENDPOINT, window_to, window_to))
+        cur.execute(sql, (CORE_ORCHESTRATOR_ENDPOINT, target, target))
         conn.commit()
