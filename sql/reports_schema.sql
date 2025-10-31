@@ -147,6 +147,69 @@ LEFT JOIN lt              ON lt.lesson_id = l.lesson_id
 LEFT JOIN exp_students es ON es.lesson_id = l.lesson_id
 LEFT JOIN attn_counts ac  ON ac.lesson_id = l.lesson_id;
 
+
+-- ----------------------------------------------------------------------------
+-- 3) Источник данных для НЕДЕЛЬНОГО отчёта координатора по посещаемости
+--     Агрегация по преподавателям за рабочие дни (пн–пт), неделя = ISO (пн..вс)
+--     Поля:
+--       week_start, week_end_mf
+--       programme_code / programme_name
+--       staff_id / staff_name / staff_email
+--       lessons_total_week (AX), lessons_unmarked_week (BX), percent_unmarked (CX)
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW rep.v_coord_weekly_attendance_by_staff AS
+WITH base AS (
+  SELECT
+    v.report_date,                    -- дата урока (DATE)
+    v.programme_code,
+    v.programme_name,
+    v.staff_id,
+    v.staff_name,
+    v.staff_email,
+    (v.cnt_unmarked > 0)::int AS is_unmarked_lesson
+  FROM rep.v_coord_daily_attendance_src v
+  WHERE v.report_date IS NOT NULL
+),
+-- отбираем только рабочие дни (пн..пт)
+mf_days AS (
+  SELECT *
+  FROM base
+  WHERE EXTRACT(ISODOW FROM report_date) BETWEEN 1 AND 5
+),
+-- считаем начало недели (ISO: пн) и конец рабочей недели (пт)
+mf AS (
+  SELECT
+    (date_trunc('week', report_date::timestamp))::date AS week_start,
+    (date_trunc('week', report_date::timestamp))::date + 4 AS week_end_mf,
+    programme_code,
+    programme_name,
+    staff_id,
+    staff_name,
+    staff_email,
+    is_unmarked_lesson
+  FROM mf_days
+)
+SELECT
+  week_start,
+  week_end_mf,
+  programme_code,
+  programme_name,
+  staff_id,
+  staff_name,
+  staff_email,
+  COUNT(*)::int                                      AS lessons_total_week,   -- AX
+  SUM(is_unmarked_lesson)::int                       AS lessons_unmarked_week, -- BX
+  CASE WHEN COUNT(*) > 0
+       THEN ROUND(100.0 * SUM(is_unmarked_lesson) / COUNT(*), 1)
+       ELSE 0 END                                    AS percent_unmarked       -- CX
+FROM mf
+GROUP BY
+  week_start, week_end_mf,
+  programme_code, programme_name,
+  staff_id, staff_name, staff_email
+;
+
+
 CREATE TABLE IF NOT EXISTS rep.email_queue (
     id                bigserial PRIMARY KEY,
     campaign_id       text        NOT NULL,    -- логическая рассылка/отчёт

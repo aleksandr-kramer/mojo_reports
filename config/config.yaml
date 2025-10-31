@@ -39,6 +39,8 @@ excel:
 reports:
   timezone: "Europe/Podgorica" # таймзона формирования отчётов
   daily_send_hour_local: 3 # запуск после CORE ETL
+  weekly_assessment_period_start: "2025-09-01"
+
   drive:
     # Корневая папка для всех отчётов (ID предоставлен)
     root_folder_id: "1_PVTr7QhtD4Y0Np7NiVKFRVSZ3aznNGa"
@@ -59,6 +61,23 @@ reports:
     template_id: "1P7cSQDCyT9h9DMNWVETGCpS8OCEFXk_B"
     per_slide_max_rows: 30
     filename_pattern: "{date}_{programme}_coordinator_daily_assessment_report.pdf"
+
+  coordinator_weekly_attendance:
+    # Корневая папка Weekly: coordinator_weekly_report
+    parent_folder_id: "1YL_pqAGKnOA_bDFYjAc791L9QaLcPpaj"
+    # Шаблон Slides: coordinator_weekly_attendance_report.pptx
+    template_id: "14Rkdy0Fi-b9A8BAm6Nps4jBHFBLo-4O_"
+    per_slide_max_rows: 30
+    filename_pattern: "{date}_{programme}_coordinator_weekly_attendance_report.pdf"
+
+  coordinator_weekly_assessment:
+    # Тот же корень Weekly
+    parent_folder_id: "1YL_pqAGKnOA_bDFYjAc791L9QaLcPpaj"
+    # Шаблон Slides: coordinator_weekly_assessment_report.pptx
+    template_id: "1VUgHb4JXJFxpR6ieNamZrAFdzdrE7HlH"
+    per_slide_max_rows: 30
+    filename_pattern: "{date}_{programme}_coordinator_weekly_assessment_report.pdf"
+
 
 google:
   rate_limits:
