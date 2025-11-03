@@ -68,6 +68,12 @@ def compute_report_date(explicit: Optional[str] = None) -> date:
 # ─────────────────────────────────────────────────────────────────────────────
 # SQL-запросы
 # ─────────────────────────────────────────────────────────────────────────────
+SQL_ACAD_DIRECTOR = """
+SELECT full_name, email
+FROM core.v_academic_director_active
+LIMIT 1
+"""
+
 
 SQL_TEACHERS_WITH_LESSONS = """
 SELECT DISTINCT staff_id, staff_name, staff_email
@@ -102,6 +108,15 @@ VALUES (NULL, %s, %s, %s::text[], %s, %s, %s, %s)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def load_academic_director_email(conn) -> Optional[str]:
+    with conn.cursor() as cur:
+        cur.execute(SQL_ACAD_DIRECTOR)
+        row = cur.fetchone()
+        if not row:
+            return None
+        return row[1]
+
+
 @dataclass
 class Teacher:
     staff_id: int
@@ -129,89 +144,129 @@ def fmt_time_span(start: Optional[datetime], finish: Optional[datetime]) -> str:
 
 def build_email_html(
     teacher_name: str,
-    report_date_str: str,
+    report_date_str: str,  # ожидается 'YYYY-MM-DD'
     rows_bad: List[Tuple[str, str]],  # [(time_span, group_name)]
     rows_unweighted: List[Tuple[str, str]],  # [(lesson_date_str, group_name)]
 ) -> str:
     """
-    Формирует компактное HTML-письмо с двумя блоками. Без вложений.
+    Формирует HTML-письмо в требуемой верстке (EN+RU подсказки), без вложений.
     """
+    from datetime import datetime
+
     first_name = extract_first_name(teacher_name)
 
-    # Блок 1
+    # Переформатируем дату для разных строк:
+    # - "Report for [DD-MM-YYYY]"
+    # - "List of lessons on [DD/MM/YYYY] ..."
+    dt = datetime.strptime(report_date_str, "%Y-%m-%d").date()
+    date_dash = dt.strftime("%d-%m-%Y")
+    date_slash = dt.strftime("%d/%m/%Y")
+
+    # ── Блок 1: Attendance (список без маркеров, без жирного времени)
     if rows_bad:
-        block1_lines = "".join(
-            f"<li><strong>{t}</strong> — {g}</li>" for t, g in rows_bad
+        block1_items = "".join(
+            f'<li style="margin:0 0 6px 0;">{t} — {g}</li>' for t, g in rows_bad
         )
-        block1_html = f"""
-        <p style="margin:0 0 8px 0;"><strong>Блок 1. Регистрация посещаемости ({report_date_str})</strong></p>
-        <ul style="margin:0 0 16px 18px; padding:0;">
-          {block1_lines}
+        block1_list_html = f"""
+        <ul style="margin:0 0 16px 18px;padding:0;">
+          {block1_items}
         </ul>
         """
+        block1_note = ""  # при наличии записей — без доп. текста
     else:
-        block1_html = f"""
-        <p style="margin:0 0 8px 0;"><strong>Блок 1. Регистрация посещаемости ({report_date_str})</strong></p>
-        <p style="margin:0 0 16px 0;color:#555;">Замечаний нет — все ваши уроки за день отмечены корректно.</p>
-        """
+        block1_list_html = ""
+        block1_note = (
+            '<p style="margin:0 0 4px 0;color:#555;">Attendance has been recorded correctly.</p>'
+            '<p style="margin:0 0 16px 0;color:#555;">Посещаемость на уроках отмечена корректно.</p>'
+        )
 
-    # Блок 2
+    block1_html = f"""
+      <p style="margin:0 0 8px 0;"><strong>List of lessons on {date_slash} with incomplete marking of present and absent students.</strong></p>
+      {block1_list_html}
+      {block1_note}
+      <div style="background:#f5f5f5;border:1px solid #eee;border-radius:6px;padding:12px 14px;margin:8px 0 16px 0;color:#444;font-size:13px;line-height:1.5;">
+        <p style="margin:0 0 6px 0;">All students present and absent in the class must be marked.</p>
+        <p style="margin:0 0 6px 0;">If lessons are double, attendance must be recorded for each lesson separately.</p>
+        <p style="margin:6px 0;">&nbsp;</p>
+        <p style="margin:0 0 6px 0;">Отмечать необходимо всех присутствующих и отсутствующих учеников в классе.</p>
+        <p style="margin:0;">Если уроки сдвоенные, регистрацию присутствия/отсутствия нужно проводить на каждом уроке.</p>
+      </div>
+    """
+
+    # ── Блок 2: Unweighted marks (список без маркеров)
     if rows_unweighted:
-        block2_lines = "".join(
-            f"<li><strong>{d}</strong> — {g}</li>" for d, g in rows_unweighted
+        block2_items = "".join(
+            f'<li style="margin:0 0 6px 0;">{d} — {g}</li>' for d, g in rows_unweighted
         )
-        block2_html = f"""
-        <p style="margin:8px 0 8px 0;"><strong>Блок 2. Оценки без выбранной формы работ (за учебный период)</strong></p>
-        <ul style="margin:0 0 16px 18px; padding:0;">
-          {block2_lines}
+        block2_list_html = f"""
+        <ul style="margin:0 0 16px 18px;padding:0;">
+          {block2_items}
         </ul>
         """
+        block2_note = ""  # при наличии записей — без доп. текста
     else:
-        block2_html = """
-        <p style="margin:8px 0 8px 0;"><strong>Блок 2. Оценки без выбранной формы работ (за учебный период)</strong></p>
-        <p style="margin:0 0 16px 0;color:#555;">Замечаний нет.</p>
-        """
+        block2_list_html = ""
+        block2_note = (
+            '<p style="margin:0 0 16px 0;color:#555;">You have no lessons with marks entered without selecting an assessment type</p>'
+            '<p style="margin:0 0 16px 0;color:#555;">У Вас нет уроков с выставленными оценками без выбора формы работ.</p>'
+        )
+    # ссылка на политику
+    policy_url_ru = "https://adriaticcollege.com/ru/policies/assessment-policy"
+    policy_url_en = "https://adriaticcollege.com/en/policies/assessment-policy"
 
+    block2_html = f"""
+      <p style="margin:8px 0 8px 0;"><strong>List of lessons in which marks have been entered without selecting an assessment type for the entire academic period</strong></p>
+      {block2_list_html}
+      {block2_note}
+      <div style="background:#f5f5f5;border:1px solid #eee;border-radius:6px;padding:12px 14px;margin:8px 0 16px 0;color:#444;font-size:13px;line-height:1.5;">
+        <p style="margin:0 0 6px 0;">According to the <a href="{policy_url_en}" target="_blank" rel="noopener noreferrer">school’s Assessment Policy</a>, marks may be awarded only for specific types of work (selected from the preset list) that include an assessment type, criterion, and weight.</p>
+        <p style="margin:0 0 6px 0;">Marks entered without selecting an assessment type will distort the final marks seen by students and parents.</p>
+        <p style="margin:0 0 10px 0;">If your list contains lessons with marks entered without selecting an assessment type, please make the necessary corrections in the electronic gradebook.</p>
+        <p style="margin:6px 0;">&nbsp;</p>
+        <p style="margin:0 0 6px 0;">Согласно <a href="{policy_url_ru}" target="_blank" rel="noopener noreferrer">школьной политики оценивания</a>, оценки могут выставляться только за конкретные виды работ (выбираются из готового списка), которые включают форму работы, критерий и вес.</p>
+        <p style="margin:0 0 6px 0;">Оценки без выбора формы работы будут искажать итоговые оценки, которые видят ученики и родители.</p>
+        <p style="margin:0;">Если в Вашем списке есть уроки с оценками без выбора формы работы, пожалуйста, в электронном журнале внесите корректировки.</p>
+      </div>
+    """
+
+    # ── Шаблон письма
     return f"""<!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <title>Ежедневный отчёт учителя</title>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width">
+  <title>Daily teacher report</title>
 </head>
 <body style="margin:0;padding:0;background:#ffffff;">
   <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#ffffff;">
-    <tr>
-      <td>
-        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="width:600px;max-width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#111;line-height:1.55;">
-          <tr>
-            <td style="padding:20px 24px 6px 24px;">
-              <p style="margin:0 0 10px 0;font-size:16px;">Уважаемая(ый), <strong>{first_name}</strong></p>
-              <p style="margin:0;color:#555;">Это ваш ежедневный отчёт по посещаемости и оцениванию.</p>
-            </td>
-          </tr>
+    <tr><td>
+      <table role="presentation" cellpadding="0" cellspacing="0" width="800" style="width:800px;max-width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#111;line-height:1.55;">
+        <tr>
+          <td style="padding:20px 24px 6px 24px;">
+            <p style="margin:0 0 10px 0;font-size:16px;">Dear <strong>{first_name}</strong>,</p>
+            <p style="margin:0;color:#555;">This email is your daily report on your entries in the school’s electronic gradebook.</p>
+            <p style="margin:0;color:#555;">Данное письмо является ежедневным отчётом по заполнению Вами электронных журналов школы.</p>
+          </td>
+        </tr>
 
-          <tr><td style="padding:8px 24px;"><hr style="border:0;border-top:1px solid #eaeaea;margin:0;"></td></tr>
+        <tr><td style="padding:8px 24px;"><hr style="border:0;border-top:1px solid #eaeaea;margin:0;"></td></tr>
 
-          <tr>
-            <td style="padding:12px 24px 6px 24px;">
-              <p style="margin:0 0 6px 0;font-size:14px;color:#555;">Отчёт за</p>
-              <p style="margin:0 0 0 0;font-size:16px;"><strong>{report_date_str}</strong></p>
-            </td>
-          </tr>
+        <tr>
+          <td style="padding:12px 24px 6px 24px;">
+            <p style="margin:0 0 0 0;font-size:16px;"><strong>Report for {date_dash}</strong></p>
+          </td>
+        </tr>
 
-          <tr><td style="padding:8px 24px 0 24px;">{block1_html}</td></tr>
-          <tr><td style="padding:0 24px 12px 24px;">{block2_html}</td></tr>
+        <tr><td style="padding:8px 24px 0 24px;">{block1_html}</td></tr>
+        <tr><td style="padding:0 24px 12px 24px;">{block2_html}</td></tr>
 
-          <tr>
-            <td style="padding:4px 24px 24px 24px;color:#777;font-size:12px;">
-              <p style="margin:0;">Если у вас есть вопросы, пожалуйста, обратитесь к координатору программы или академическому отделу.</p>
-            </td>
-          </tr>
+        <tr>
+          <td style="padding:4px 24px 24px 24px;color:#777;font-size:12px;">
+            <p style="margin:0;">If you have any questions, please contact your Programme Coordinator.</p>
+          </td>
+        </tr>
 
-        </table>
-      </td>
-    </tr>
+      </table>
+    </td></tr>
   </table>
 </body>
 </html>"""
@@ -275,6 +330,12 @@ def load_unweighted_for_teacher(
 def main():
     parser = argparse.ArgumentParser(description="Teacher daily email report (no PDF)")
     parser.add_argument("--date", help="YYYY-MM-DD (report date)")
+    parser.add_argument(
+        "--test-to-academic-director",
+        action="store_true",
+        help="redirect all messages to academic director for testing",
+    )
+
     args = parser.parse_args()
 
     # advisory-lock на весь прогон
@@ -307,8 +368,18 @@ def main():
         if not sender:
             raise RuntimeError("Missing reports.email.sender in config.yaml")
 
+        redirect_to_ad = bool(getattr(args, "test_to_academic_director", False))
+        acad_email = None
+
         with get_conn() as conn:
             teachers = load_teachers_with_lessons(conn, report_date)
+
+            if redirect_to_ad:
+                acad_email = load_academic_director_email(conn)
+                if not acad_email:
+                    raise RuntimeError(
+                        "Cannot find academic director email in core.v_academic_director_active"
+                    )
 
             for t in teachers:
                 # пропускаем, если нет e-mail
@@ -350,11 +421,15 @@ def main():
                 error_text = None
                 ok = False
                 try:
+                    to_list = [t.staff_email]
+                    if redirect_to_ad and acad_email:
+                        to_list = [acad_email]
+
                     message_id = (
                         send_email_with_attachments(
                             gmail=gmail,
                             sender=sender,
-                            to=[t.staff_email],
+                            to=to_list,
                             cc=None,  # без CC
                             subject=subject,
                             html_body=html_body,
@@ -362,6 +437,7 @@ def main():
                         )
                         or ""
                     )
+
                     ok = True
                 except Exception as e:
                     ok = False
