@@ -37,47 +37,45 @@ excel:
     staff_id: "1yDGjR1S0fFTxCmQHwGeEvlUn9RAs51S7"
 
 reports:
-  timezone: "Europe/Podgorica" # таймзона формирования отчётов
-  daily_send_hour_local: 3 # запуск после CORE ETL
+  timezone: "Europe/Podgorica"
+  daily_send_hour_local: 3
   weekly_assessment_period_start: "2025-09-01"
 
   drive:
-    # Корневая папка для всех отчётов (ID предоставлен)
     root_folder_id: "1_PVTr7QhtD4Y0Np7NiVKFRVSZ3aznNGa"
   email:
     sender: "reports@adriaticcollege.com"
-    # cc-политика по ролям может расширяться; для текущего отчёта cc = academic_director из CORE
     cc_roles: []
 
-  # Настройки КОНКРЕТНО для ежедневного отчёта координаторов посещаемости
+  # Новый ежедневный отчёт учителей (только письма, без PDF)
+  teacher_daily:
+    subject: "Mojo _ Daily Reports"
+    # Дни включения по локальному времени: Tue..Sat (опционально, для наглядности)
+    enabled_weekdays_local: [2, 3, 4, 5, 6] # 1=Mon .. 7=Sun; здесь 2..6
+
   coordinator_daily_attendance:
-    # Папка вида mojo_reports/coordinator_daily_attendance_report (ID предоставлен)
     parent_folder_id: "1dsk_CUXZKzr0fA1ZsPdLm6X90gYvGReu"
     template_id: "1aRiIjrCY8bE32Jvqdub0SJPc7pGy7i1X"
     per_slide_max_rows: 30
     filename_pattern: "{date}_{programme}_coordinator_daily_attendance_report.pdf"
+
   coordinator_daily_assessment:
-    parent_folder_id: "1dsk_CUXZKzr0fA1ZsPdLm6X90gYvGReu" # тот же корень, что у attendance
+    parent_folder_id: "1dsk_CUXZKzr0fA1ZsPdLm6X90gYvGReu"
     template_id: "1P7cSQDCyT9h9DMNWVETGCpS8OCEFXk_B"
     per_slide_max_rows: 30
     filename_pattern: "{date}_{programme}_coordinator_daily_assessment_report.pdf"
 
   coordinator_weekly_attendance:
-    # Корневая папка Weekly: coordinator_weekly_report
     parent_folder_id: "1YL_pqAGKnOA_bDFYjAc791L9QaLcPpaj"
-    # Шаблон Slides: coordinator_weekly_attendance_report.pptx
     template_id: "14Rkdy0Fi-b9A8BAm6Nps4jBHFBLo-4O_"
     per_slide_max_rows: 30
     filename_pattern: "{date}_{programme}_coordinator_weekly_attendance_report.pdf"
 
   coordinator_weekly_assessment:
-    # Тот же корень Weekly
     parent_folder_id: "1YL_pqAGKnOA_bDFYjAc791L9QaLcPpaj"
-    # Шаблон Slides: coordinator_weekly_assessment_report.pptx
     template_id: "1VUgHb4JXJFxpR6ieNamZrAFdzdrE7HlH"
     per_slide_max_rows: 30
     filename_pattern: "{date}_{programme}_coordinator_weekly_assessment_report.pdf"
-
 
 google:
   rate_limits:

@@ -354,3 +354,37 @@ LEFT JOIN prog_named pn ON pn.group_id = m.group_id AND pn.ref_date = m.lesson_d
 LEFT JOIN main_staff st ON st.group_id = m.group_id AND st.lesson_date = m.lesson_date AND st.report_date = m.report_date
 LEFT JOIN core.staff s  ON s.staff_id = st.staff_id
 ;
+
+-- ----------------------------------------------------------------------------
+-- 4) Вью-помощник для ежедневного ПИСЬМА УЧИТЕЛЮ: проблемные уроки за дату
+--     Оставляем только уроки, где регистрация неполная по правилу:
+--     (cnt_unmarked > 0) OR (events_total < students_expected)
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW rep.v_teacher_daily_bad_attendance AS
+SELECT
+  v.report_date,
+  v.staff_id,
+  v.staff_name,
+  v.staff_email,
+  v.group_name,
+  v.lesson_id,
+  v.lesson_start,
+  v.lesson_finish
+FROM rep.v_coord_daily_attendance_src v
+WHERE (v.cnt_unmarked > 0 OR v.events_total < v.students_expected);
+
+-- ----------------------------------------------------------------------------
+-- 5) Вью-помощник: уроки c оценками БЕЗ формы (по учителю) за период
+--     Выводим все такие случаи; период зададим в приложении (WHERE report_date >= :period_start)
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW rep.v_teacher_unweighted_marks AS
+SELECT
+  a.report_date,       -- день фактического проставления оценок
+  a.lesson_date,       -- дата самого урока
+  a.staff_id,
+  a.staff_name,
+  a.staff_email,
+  a.group_id,
+  a.group_name
+FROM rep.v_coord_daily_assessment_lessons a
+WHERE a.has_unweighted = TRUE;
