@@ -153,7 +153,6 @@ def load_assessment_rows_period(conn, period_start: date) -> List[dict]:
        AND l.lesson_date = a.lesson_date
        AND l.latest_report_date = a.report_date
       WHERE a.report_date >= %s
-        AND a.has_unweighted = TRUE
       ORDER BY a.programme_code, a.staff_name NULLS LAST, a.group_name, a.lesson_date;
     """
     with conn.cursor() as cur:

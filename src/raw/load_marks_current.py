@@ -137,19 +137,19 @@ def run_backfill(days: List[date]) -> None:
     client = MojoApiClient()
     batch_id = str(uuid.uuid4())
 
-    d_min, d_max = min(days), max(days)
+    unique_days = sorted(set(days))
+    d_min, d_max = unique_days[0], unique_days[-1]
     items = fetch_marks(client, d_min, d_max)
-    wanted = {d.isoformat() for d in days}
+    wanted = {d.isoformat() for d in unique_days}
     items = [it for it in items if it.get("date") in wanted]
 
     rows = to_raw_rows(items, src_day=date.today(), batch_id=batch_id)
     ensure_marks_partitions([r["mark_date"] for r in rows])
-    # Для backfill удаляем за минимально-максимальный диапазон этих дней
-    d_from, d_to = min(days), max(days)
+    # Для backfill удаляем только выбранные даты, без затрагивания промежутка между ними
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM raw.marks_current WHERE mark_date BETWEEN %s AND %s",
-            (d_from, d_to),
+            "DELETE FROM raw.marks_current WHERE mark_date = ANY(%s)",
+            (unique_days,),
         )
         conn.commit()
 
@@ -164,12 +164,12 @@ def run_backfill(days: List[date]) -> None:
             "mode": "backfill",
             "inserted": inserted,
             "batch_id": batch_id,
-            "days": [d.isoformat() for d in days],
+            "days": [d.isoformat() for d in unique_days],
         },
         notes="backfill",
     )
     print(
-        f"[marks_current:backfill] {inserted} rows, days={','.join(sorted(d.isoformat() for d in days))}"
+        f"[marks_current:backfill] {inserted} rows, days={','.join(d.isoformat() for d in unique_days)}"
     )
 
 
