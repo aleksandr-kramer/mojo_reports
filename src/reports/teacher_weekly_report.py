@@ -630,6 +630,9 @@ def main():
                                     len(asm_rows),
                                 ),
                             )
+                            run_id_asm = cur.fetchone()[0]
+                            if run_id_to_log is None:
+                                run_id_to_log = run_id_asm
                         conn.commit()
                     finally:
                         try:
