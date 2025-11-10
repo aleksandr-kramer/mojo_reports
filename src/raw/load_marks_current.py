@@ -79,6 +79,13 @@ def run_init(d_from: date, d_to: date) -> None:
     items = fetch_marks(client, d_from, d_to)
     rows = to_raw_rows(items, src_day=date.today(), batch_id=batch_id)
 
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM raw.marks_current WHERE mark_date BETWEEN %s AND %s",
+            (d_from, d_to),
+        )
+        conn.commit()
+
     ensure_marks_partitions([r["mark_date"] for r in rows])
     inserted = insert_marks_current_rows(rows)
 
@@ -105,6 +112,13 @@ def run_daily() -> None:
     items = fetch_marks(client, d_from, d_to)
     rows = to_raw_rows(items, src_day=today, batch_id=batch_id)
 
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM raw.marks_current WHERE mark_date BETWEEN %s AND %s",
+            (d_from, d_to),
+        )
+        conn.commit()
+
     ensure_marks_partitions([r["mark_date"] for r in rows])
     inserted = insert_marks_current_rows(rows)
 
@@ -130,6 +144,15 @@ def run_backfill(days: List[date]) -> None:
 
     rows = to_raw_rows(items, src_day=date.today(), batch_id=batch_id)
     ensure_marks_partitions([r["mark_date"] for r in rows])
+    # Для backfill удаляем за минимально-максимальный диапазон этих дней
+    d_from, d_to = min(days), max(days)
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM raw.marks_current WHERE mark_date BETWEEN %s AND %s",
+            (d_from, d_to),
+        )
+        conn.commit()
+
     inserted = insert_marks_current_rows(rows)
 
     upsert_sync_state(

@@ -88,24 +88,28 @@ def _upsert_marks_current(cur, d_from: date, d_to: date) -> int:
 
         CASE WHEN COALESCE(mc.control, 0) = 1 THEN TRUE ELSE FALSE END AS is_control,
 
-
-        -- форма: если в RAW цифра — считаем это id формы
+        -- форма
         CASE WHEN mc.form ~ '^[0-9]+$' THEN mc.form::bigint ELSE NULL END AS form_id,
         CASE WHEN mc.form ~ '^[0-9]+$' THEN NULL ELSE NULLIF(TRIM(mc.form), '') END AS form_name_raw,
 
         mc.weight                                          AS weight_raw,
         CASE
-          WHEN mc.weight IS NULL THEN NULL
-          ELSE LEAST(GREATEST(ROUND(mc.weight)::int, 0), 100)
+          WHEN mc.weight IS NOT NULL THEN LEAST(GREATEST(ROUND(mc.weight)::int, 0), 100)
+          WHEN mc.form ~ '^[0-9]+$' AND wf.weight_pct IS NOT NULL THEN wf.weight_pct
+          ELSE NULL
         END                                                AS weight_pct
-      FROM src mc
-      JOIN core.student st
-        ON st.student_id = mc.id_student
-      LEFT JOIN core.teaching_group tg
-        ON tg.group_name = mc.group_name
-      LEFT JOIN core.ref_academic_period ap
-        ON mc.mark_date BETWEEN ap.start_date AND ap.end_date
-    )
+        FROM src mc
+        JOIN core.student st
+          ON st.student_id = mc.id_student
+        LEFT JOIN core.teaching_group tg
+          ON tg.group_name = mc.group_name
+        LEFT JOIN core.ref_academic_period ap
+          ON mc.mark_date BETWEEN ap.start_date AND ap.end_date
+        LEFT JOIN core.ref_work_form wf
+          ON (CASE WHEN mc.form ~ '^[0-9]+$' THEN mc.form::bigint ELSE NULL END) = wf.form_id
+
+
+
     INSERT INTO core.mark_current
       (mark_id, student_id, group_id, period_id, period_label_raw, group_name_snapshot,
       lesson_date, created_at_src, value, assessment, assessment_scheme, is_control,
@@ -150,6 +154,12 @@ def _upsert_marks_current(cur, d_from: date, d_to: date) -> int:
           core.mark_current.weight_pct        IS DISTINCT FROM EXCLUDED.weight_pct;
 
     """
+    # Полная пересборка CORE за окно: сперва удаляем, потом вставляем заново из RAW
+    cur.execute(
+        "DELETE FROM core.mark_current WHERE lesson_date BETWEEN %(d_from)s AND %(d_to)s",
+        {"d_from": d_from, "d_to": d_to},
+    )
+
     cur.execute(sql, {"d_from": d_from, "d_to": d_to, "ng_en": ng_en, "ng_ru": ng_ru})
     return cur.rowcount or 0
 

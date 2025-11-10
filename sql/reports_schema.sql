@@ -378,13 +378,23 @@ WHERE (v.cnt_unmarked > 0 OR v.events_total < v.students_expected);
 --     Выводим все такие случаи; период зададим в приложении (WHERE report_date >= :period_start)
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW rep.v_teacher_unweighted_marks AS
+WITH latest AS (
+  SELECT group_id, lesson_date, MAX(report_date) AS latest_report_date
+  FROM rep.v_coord_daily_assessment_lessons
+  GROUP BY group_id, lesson_date
+)
 SELECT
-  a.report_date,       -- день фактического проставления оценок
-  a.lesson_date,       -- дата самого урока
+  a.report_date,
+  a.lesson_date,
   a.staff_id,
   a.staff_name,
   a.staff_email,
   a.group_id,
   a.group_name
 FROM rep.v_coord_daily_assessment_lessons a
+JOIN latest l
+  ON l.group_id = a.group_id
+ AND l.lesson_date = a.lesson_date
+ AND l.latest_report_date = a.report_date
 WHERE a.has_unweighted = TRUE;
+
