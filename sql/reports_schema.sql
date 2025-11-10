@@ -398,3 +398,60 @@ JOIN latest l
  AND l.latest_report_date = a.report_date
 WHERE a.has_unweighted = TRUE;
 
+
+-- 6) WEEKLY (Учитель): детализация проблемной регистрации за учебную неделю (пн–пт).
+--    Используется для Блока 1 PDF и для списков в письме.
+CREATE OR REPLACE VIEW rep.v_teacher_weekly_attendance_detail AS
+WITH base AS (
+  SELECT
+    v.report_date,
+    (date_trunc('week', v.report_date::timestamp))::date          AS week_start,
+    (date_trunc('week', v.report_date::timestamp))::date + 4      AS week_end_mf,
+    v.staff_id,
+    v.staff_name,
+    v.staff_email,
+    v.group_name,
+    rp.programme_name,
+    v.lesson_start,
+    v.lesson_finish,
+    v.cnt_unmarked,
+    v.events_total,
+    v.students_expected
+  FROM rep.v_coord_daily_attendance_src v
+  LEFT JOIN core.ref_programme rp ON rp.programme_code = v.programme_code
+  WHERE v.report_date IS NOT NULL
+    AND EXTRACT(ISODOW FROM v.report_date) BETWEEN 1 AND 5  -- Mon..Fri
+)
+SELECT
+  report_date, week_start, week_end_mf,
+  staff_id, staff_name, staff_email,
+  group_name, programme_name,
+  lesson_start, lesson_finish
+FROM base
+WHERE (cnt_unmarked > 0 OR events_total < students_expected);
+
+-- 7) WEEKLY (Учитель): свод по урокам за неделю (всего и с проблемной регистрацией).
+--    Используется для расчёта {{allcount}}, {{unregcount}}, {{regcount}}.
+CREATE OR REPLACE VIEW rep.v_teacher_weekly_attendance_summary AS
+WITH base AS (
+  SELECT
+    v.report_date,
+    (date_trunc('week', v.report_date::timestamp))::date     AS week_start,
+    (date_trunc('week', v.report_date::timestamp))::date + 4 AS week_end_mf,
+    v.staff_id,
+    v.staff_name,
+    v.staff_email,
+    (v.cnt_unmarked > 0 OR v.events_total < v.students_expected)::int AS is_bad
+  FROM rep.v_coord_daily_attendance_src v
+  WHERE v.report_date IS NOT NULL
+    AND EXTRACT(ISODOW FROM v.report_date) BETWEEN 1 AND 5
+)
+SELECT
+  week_start, week_end_mf,
+  staff_id, staff_name, staff_email,
+  COUNT(*)::int                      AS lessons_total_week,
+  SUM(is_bad)::int                   AS lessons_bad_week
+FROM base
+GROUP BY
+  week_start, week_end_mf,
+  staff_id, staff_name, staff_email;

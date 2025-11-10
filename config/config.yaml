@@ -76,6 +76,23 @@ reports:
     template_id: "1VUgHb4JXJFxpR6ieNamZrAFdzdrE7HlH"
     per_slide_max_rows: 30
     filename_pattern: "{date}_{programme}_coordinator_weekly_assessment_report.pdf"
+  
+  # Еженедельный отчёт учителя — Блок 1 (посещаемость за неделю, PDF)
+  teacher_weekly_attendance:
+    template_id: "1qeysx5BEqRg-ZRpcMbkdZd55UEN7WZGu"   # teacher_weekly_attendance_report.pptx
+    parent_folder_id: "1kGyvGbVSEOBDyk8wPQqe2XNUkhUC6sKF" # mojo_reports/teacher_weekly_report
+    per_slide_max_rows: 26
+    filename_pattern: "{date2}_{teacher}_teacher_weekly_attendance.pdf"
+
+  # Еженедельный отчёт учителя — Блок 2 (оценки без форм, за весь учебный период, PDF)
+  teacher_weekly_assessment:
+    template_id: "1t0SyVB8_9N0y-TWzcoqKOM2gqn2osCRb"   # teacher_weekly_assessment_report.pptx
+    parent_folder_id: "1kGyvGbVSEOBDyk8wPQqe2XNUkhUC6sKF"
+    per_slide_max_rows: 30
+    filename_pattern: "{date2}_{teacher}_teacher_weekly_assessment.pdf"
+
+  teacher_daily:
+    subject: "Mojo _ Daily Reports"
 
 google:
   rate_limits:
