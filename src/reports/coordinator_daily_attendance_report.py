@@ -144,13 +144,26 @@ def load_source_rows(conn, report_date: date) -> List[dict]:
 
 
 def load_assessment_rows(conn, report_date: date) -> List[dict]:
+    # Берём только ПОСЛЕДНИЙ снимок по (group_id, lesson_date),
+    # но оставляем все уроки с оцениванием за дату (и с формой, и без неё).
+    # Детализация "без формы" строится далее в коде (build_assessment_detail_rows).
     sql = """
-      SELECT report_date, programme_code, programme_name,
-             group_id, group_name, lesson_date,
-             staff_id, staff_name, staff_email, has_unweighted
-      FROM rep.v_coord_daily_assessment_lessons
-      WHERE report_date = %s
-      ORDER BY programme_code, staff_name NULLS LAST, group_name, lesson_date;
+      WITH latest AS (
+        SELECT group_id, lesson_date, MAX(report_date) AS latest_report_date
+        FROM rep.v_coord_daily_assessment_lessons
+        GROUP BY group_id, lesson_date
+      )
+      SELECT
+        a.report_date, a.programme_code, a.programme_name,
+        a.group_id, a.group_name, a.lesson_date,
+        a.staff_id, a.staff_name, a.staff_email, a.has_unweighted
+      FROM rep.v_coord_daily_assessment_lessons a
+      JOIN latest l
+        ON l.group_id = a.group_id
+       AND l.lesson_date = a.lesson_date
+       AND l.latest_report_date = a.report_date
+      WHERE a.report_date = %s
+      ORDER BY a.programme_code, a.staff_name NULLS LAST, a.group_name, a.lesson_date;
     """
     with conn.cursor() as cur:
         cur.execute(sql, (report_date,))

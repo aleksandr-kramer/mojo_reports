@@ -107,8 +107,7 @@ def _upsert_marks_current(cur, d_from: date, d_to: date) -> int:
           ON mc.mark_date BETWEEN ap.start_date AND ap.end_date
         LEFT JOIN core.ref_work_form wf
           ON (CASE WHEN mc.form ~ '^[0-9]+$' THEN mc.form::bigint ELSE NULL END) = wf.form_id
-
-
+    )  
 
     INSERT INTO core.mark_current
       (mark_id, student_id, group_id, period_id, period_label_raw, group_name_snapshot,

@@ -8,7 +8,7 @@ endpoints:
 
 load:
   daily_window_days: 2 # скользящее окно инкремента, если нет updatedAfter
-  weekly_deep_days: 60
+  weekly_deep_days: 90
   retry:
     max_attempts: 5
     backoff_seconds: 2
