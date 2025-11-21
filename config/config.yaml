@@ -105,7 +105,7 @@ google:
 monitoring:
   etl_failure:
     enabled: true
-    sender: "no-reply@adriaticcollege.com"
+    sender: "reports@adriaticcollege.com"
     notify_emails:
       - "aleksandr.kramer@adriaticcollege.com"
     subject: "Mojo Reports: ETL failure"
