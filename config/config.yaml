@@ -101,3 +101,11 @@ google:
       burst: 10 # не больше 10 подряд без паузы
       min_seconds_between_sends: 40
       max_consecutive_errors: 5
+
+monitoring:
+  etl_failure:
+    enabled: true
+    sender: "no-reply@adriaticcollege.com"
+    notify_emails:
+      - "aleksandr.kramer@adriaticcollege.com"
+    subject: "Mojo Reports: ETL failure"
