@@ -1,0 +1,29 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Ежедневные задачи (пн–сб; воскресенье пропускаем)
+# 01:00 — RAW -> CORE (CORE запускается только если RAW завершился успешно)
+0 1 * * 1-6   cd /var/www/mojo_reports && /bin/bash scripts/run_raw.sh >> /var/log/mojo_reports/raw.log 2>&1 && /bin/bash scripts/run_core.sh >> /var/log/mojo_reports/core.log 2>&1
+
+# 03:15 — бэкап БД
+15 3 * * *    /root/backup_db.sh
+
+# 03:30 вт–сб — ежедневный отчёт координаторов за вчера
+# (сдвинут на 30 минут после backup_db)
+30 3 * * 2-6  cd /var/www/mojo_reports && ENV_FILE=.env.server /bin/bash scripts/run_report_coord_daily.sh >> /var/log/mojo_reports/report_coord_daily.log 2>&1
+
+# 04:30 — синхронизация медиа
+30 4 * * *    /root/sync_media.sh
+
+# Недельные задачи
+# 01:00 вс — weekly-deep: RAW weekly-deep -> CORE weekly-deep
+0 1 * * 0     cd /var/www/mojo_reports && ENV_FILE=.env.server /bin/bash scripts/run_weekly_deep.sh >> /var/log/mojo_reports/weekly.log 2>&1
+
+# 04:15 пн — недельный отчёт координатора (после weekly-deep)
+15 4 * * 1    cd /var/www/mojo_reports && ENV_FILE=.env.server /bin/bash scripts/run_report_coord_weekly.sh >> /var/log/mojo_reports/coord_weekly.log 2>&1
+
+# 05:00 пн — недельный отчёт учителя (после отчёта координатора)
+0 5 * * 1     cd /var/www/mojo_reports && ENV_FILE=.env.server /bin/bash scripts/run_report_teacher_weekly.sh >> /var/log/mojo_reports/teacher_weekly.log 2>&1
+
+# 05:00 вт–сб — ежедневный отчёт учителя
+0 5 * * 2-6   cd /var/www/mojo_reports && ENV_FILE=.env.server /bin/bash scripts/run_report_teacher_daily.sh >> /var/log/mojo_reports/teacher_daily.log 2>&1
