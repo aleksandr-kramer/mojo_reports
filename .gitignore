@@ -70,3 +70,5 @@ exports/
 .cache_build/
 
 README.md
+# Snapshot artifact
+project_snapshot.md
